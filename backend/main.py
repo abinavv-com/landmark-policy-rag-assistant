@@ -22,11 +22,12 @@ import os
 import json
 import re
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger("policy_rag_assistant")
@@ -135,6 +136,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+FRONTEND_INDEX_PATH = Path(__file__).resolve().parent.parent / "frontend" / "index.html"
+
 
 # ---------------------------------------------------------------------------
 # Request/response models
@@ -214,6 +217,13 @@ def _build_context_block(chunks: list[dict]) -> str:
 @app.get("/health")
 async def health() -> dict[str, Any]:
     return {"status": "ok", "index_ready": bool(app_state.index_ready)}
+
+
+@app.get("/")
+async def frontend_root() -> Any:
+    if FRONTEND_INDEX_PATH.exists():
+        return FileResponse(FRONTEND_INDEX_PATH)
+    return _error("Frontend index.html was not bundled with the deployment.", status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 _TITLE_RE = re.compile(r"^#\s+(.*)$", re.MULTILINE)
@@ -357,6 +367,17 @@ async def ask(request: AskRequest) -> Any:
         "citations": clean_citations,
         "retrieved_chunks": raw_chunks,
     }
+
+
+@app.get("/{full_path:path}")
+async def frontend_fallback(full_path: str) -> Any:
+    # Browser refreshes should return the single-page frontend. Unknown API
+    # style paths still get a JSON 404 so client mistakes are visible.
+    if full_path.startswith("api/"):
+        return _error("Not found.", status.HTTP_404_NOT_FOUND)
+    if FRONTEND_INDEX_PATH.exists():
+        return FileResponse(FRONTEND_INDEX_PATH)
+    return _error("Frontend index.html was not bundled with the deployment.", status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @app.exception_handler(Exception)
