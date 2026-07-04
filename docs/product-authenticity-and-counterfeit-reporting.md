@@ -1,0 +1,29 @@
+# Product Authenticity and Counterfeit Reporting
+
+This document covers how Landmark Group verifies the authenticity of branded merchandise sold through its stores and online storefronts, how a customer reports a suspected counterfeit item, and how an authenticity investigation is handled through to resolution. It applies across Lifestyle, Max, Splash, Home Centre, Centrepoint, and Babyshop in the UAE, KSA, and India, and is most relevant to Lifestyle, given its large footprint of premium and designer concession counters.
+
+## How Authenticity Is Verified at the Point of Sale
+
+The great majority of stock sold across Landmark brands is first-party inventory, procured directly from the brand owner or an authorized regional distributor under a signed supply agreement, and carries little meaningful counterfeit risk because it never passes through an intermediary that could substitute goods. Lifestyle's premium and designer concession counters, described in the Lifestyle Brand FAQ, operate as shop-in-shop spaces run by the concession brand's own staff using the concession brand's own stock, sourced through that brand's global supply chain rather than Landmark's own procurement; Landmark's role at these counters is to provide floor space and point-of-sale infrastructure, not to source the product.
+
+To manage authenticity risk at concession counters and with any third-party or licensed brand sold across the group, Landmark's merchandising team requires every concession and licensed-brand partner to provide supply-chain documentation (authorized distributor certificates, import records, or direct brand-owner agreements) as a condition of being onboarded onto the retail floor, re-verified annually at concession renewal. This upstream verification is what allows Landmark to state that products sold on its shop floors and online storefronts are authentic, barring an isolated supply-chain failure, which is treated as a serious incident when it occurs.
+
+## How a Customer Reports a Suspected Counterfeit
+
+A customer who suspects an item is not authentic — inconsistent branding, stitching, or packaging compared to a known genuine item, or a serial number or authentication tag that does not match the brand's own verification system — can report the concern through three channels: the "Report a Concern" option in My Orders, in-app chat flagged "suspected counterfeit," or in person at the store's customer service desk, where a manager can inspect the item directly. Counterfeit reports always route to a specialized brand-protection queue rather than the standard CX or returns queue, since the investigation process and required evidence differ from an ordinary return.
+
+The customer is asked to provide clear photos of the item, its packaging, any tags or authentication marks, and the original purchase receipt or order confirmation. Where the concession or brand partner maintains its own authentication tool (a QR code or serial number lookup on the brand's own website), CX asks the customer to check this first, since it can sometimes resolve the question immediately without a full investigation.
+
+## Investigation Process
+
+Once a counterfeit report is logged, Landmark's brand-protection team opens a case and, where the item was sold through a concession or licensed-brand counter, forwards the evidence to that brand's own authentication or quality-assurance team, since the brand owner is typically the definitive authority on distinguishing genuine from counterfeit stock of its own products. This step is what most differentiates a counterfeit investigation from a standard quality complaint: an ordinary quality issue (a loose seam, a faded print, a malfunctioning zipper) is assessed and resolved entirely by Landmark's own returns or warranty process, while an authenticity question is escalated to the brand itself for a determination.
+
+The investigation typically takes 7-10 business days for first-party and directly-sourced brand items, and up to 15 business days for concession or licensed-brand items where an external brand authentication team must respond. The customer's item is not required to be surrendered during this period unless the brand's authentication process specifically requires physical inspection, in which case a prepaid, insured shipping label is provided.
+
+## Resolution if Counterfeit Is Confirmed
+
+If an item is confirmed counterfeit, the customer receives a full refund to their original payment method (or store credit with the standard 10% bonus if preferred, per the Refund Methods and Store Credit Policy) regardless of how long ago the purchase was made, since the 30-day return window does not apply to a confirmed authenticity failure. Landmark also issues a goodwill gesture — typically a AED 100-300 e-voucher or an equivalent Landmark Rewards bonus-point credit, scaled to case severity — separate from the refund itself, and opens an internal review of how the item entered its supply chain, which can result in suspending or terminating a responsible concession partner's floor space pending a full audit.
+
+## How This Differs From a Quality Complaint
+
+A quality complaint concerns a genuine, authentic product that has a manufacturing flaw, and is resolved through the standard Returns and Exchange Policy, Damaged or Defective Items Policy, or Warranty Policy depending on when the issue was discovered. A counterfeit report concerns the fundamental authenticity of the item itself, is handled by a specialized brand-protection queue rather than standard CX, is not bound by the normal return window, and always carries a goodwill gesture on top of the refund once confirmed. CX agents should ask the customer to describe what looks wrong with the item before routing the case: a manufacturing flaw (a loose button, a scratch) belongs in the standard quality process, while a genuine doubt about whether the product itself is real belongs in the authenticity queue.

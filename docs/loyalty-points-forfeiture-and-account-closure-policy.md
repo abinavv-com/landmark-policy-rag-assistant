@@ -1,0 +1,29 @@
+# Loyalty Points Forfeiture and Account Closure Policy
+
+This document covers what happens to a Landmark Rewards points balance in three specific circumstances not addressed by the standard points-expiry rule in the Loyalty Program FAQ: extended account inactivity, forfeiture following confirmed fraud or program abuse, and account deletion. It should be read alongside the Loyalty Program FAQ (for standard 18-month points expiry) and the Data Privacy and Account Security FAQ (for the account deletion process itself).
+
+## Inactivity-Based Forfeiture
+
+A Landmark Rewards account is classified as inactive if it records no earning transaction (a purchase) and no redemption transaction for a continuous period of 24 months. This is distinct from the standard 18-month points-expiry rule, which ages out individual point batches on a first-in-first-out basis regardless of account activity; the 24-month inactivity rule instead affects the account's tier status and any residual points balance below the standard redemption threshold.
+
+Once an account crosses 24 months of inactivity, its Landmark Rewards tier resets to Silver regardless of prior tier history, since tier status is already recalculated on rolling 12-month spend and an account with no spend in 24 months has no qualifying trailing-spend window to maintain a higher tier. Any points balance remaining at the 24-month inactivity mark that has not already expired under the standard 18-month rule is forfeited outright, since a balance surviving past 18 months on a dormant account typically reflects points earned within the last 6 months before the account went inactive. Members receive an app notification and an email at the 18-month and 22-month inactivity marks warning that continued inactivity will result in balance forfeiture, giving a reasonable window to log in or transact before the account is treated as dormant.
+
+Reactivating a dormant account by making a new purchase does not restore forfeited points; the account resumes standard point earning from zero and simply begins accruing under the new activity going forward.
+
+## Forfeiture on Fraud or Program Abuse
+
+Points earned through, or applied toward, a transaction later found to be fraudulent (for example, a chargeback-disputed purchase, a payment later reversed for fraud, or points manipulation through account-sharing schemes designed to exploit bonus-multiplier campaigns) are reversed as soon as the fraud finding is confirmed by the CX fraud review team, regardless of how long ago the points were earned or whether they have already been redeemed. If points already redeemed toward a subsequent purchase are later found to originate from a fraudulent transaction, the account is placed into a negative points balance, which must be cleared through future earning before further redemption is permitted; the account is not immediately suspended for a negative balance alone, but repeat or serious cases are referred to the same fraud review process described in the Student and Staff Discount Program's re-verification section.
+
+Confirmed program abuse — including operating multiple linked accounts to bypass a single-account redemption cap, or systematic doorbuster-limit circumvention as described in the Sale Event Rules document — results in full forfeiture of the abusing account's points balance and, for serious or repeat cases, permanent closure of the Landmark Rewards account and forfeiture of any active Landmark+ subscription without refund. Forfeiture decisions of this kind are made by the fraud review team, not by first-line CX agents, and are communicated to the customer with the specific finding that triggered the action.
+
+## Points Handling on Voluntary Account Deletion
+
+As set out in the Data Privacy and Account Security FAQ, requesting full account deletion results in forfeiture of the Landmark Rewards points balance and any active Landmark+ membership as part of the account-closure process; neither is refunded, converted to cash, or transferable to another account, including a family member's account. Customers who wish to preserve value before deleting their account should redeem their full points balance and use up any active Landmark+ benefits before submitting the deletion request, since the 30-calendar-day processing window for verified deletion requests does not pause or extend to accommodate last-minute redemption — once the request is submitted, the points and membership are locked from further use immediately, ahead of the account and data being fully removed at the end of the 30-day window.
+
+## Account Closure Initiated by Landmark
+
+In rare cases, Landmark may close a customer's Landmark Rewards account unilaterally, distinct from a customer-initiated deletion request, where the fraud review team confirms serious or repeated abuse as described above. A Landmark-initiated closure follows the same points and Landmark+ forfeiture outcome as fraud-related forfeiture, and the customer is notified by email with the reason for closure and, where applicable, the right to appeal the decision through the formal Complaints Team channel described in the Complaint Escalation Process within 30 days of the closure notice.
+
+## Requesting a Balance Reinstatement
+
+A member who believes their points were forfeited in error (for example, an inactivity forfeiture applied despite the account having recent transaction activity that was not correctly logged) can request a manual review through CX, providing proof of the disputed activity such as an order confirmation or payment receipt. Reinstatement requests are reviewed within 10 business days and, if approved, the forfeited points are restored to the account's active balance; reinstatement is not available for points forfeited due to a confirmed fraud finding, since those cases have already been through the fraud review team's investigation process rather than an automated inactivity or expiry rule.
