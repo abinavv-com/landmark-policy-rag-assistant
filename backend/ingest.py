@@ -15,9 +15,10 @@ Storage format
 We write a single ``backend/index.json`` file containing a list of records:
 
     {
+      "id": "returns-and-exchange-policy.md#Refund Methods#0",
       "source": "returns-and-exchange-policy.md",
       "section": "Refund Methods",
-      "text": "<full chunk text including the section heading>",
+      "text": "<chunk text — a whole short section, or one paragraph of a longer one>",
       "embedding": [0.0123, -0.0456, ...]   # 1536 floats for text-embedding-3-small
     }
 
@@ -64,19 +65,75 @@ EMBEDDING_MODEL = "text-embedding-3-small"
 # A section header line looks like: "## Refund Methods"
 _SECTION_HEADER_RE = re.compile(r"^##\s+(.*)$", re.MULTILINE)
 
+# Blank-line paragraph boundary (one or more blank lines, allowing trailing
+# whitespace on the "blank" line).
+_PARAGRAPH_SPLIT_RE = re.compile(r"\n\s*\n+")
+
+# Sections with more than this many paragraphs are split further into one
+# chunk per paragraph, so long sections get real paragraph-level
+# granularity instead of being retrieved/scored as one large blob.
+_MAX_PARAGRAPHS_PER_CHUNK = 2
+
+
+def _split_into_paragraphs(text: str) -> list[str]:
+    """Split ``text`` on blank-line boundaries into non-empty paragraphs."""
+    return [p.strip() for p in _PARAGRAPH_SPLIT_RE.split(text.strip()) if p.strip()]
+
+
+def _make_section_chunks(source: str, section_title: str, section_text: str, body: str) -> list[dict]:
+    """Turn one ``##`` section into one or more paragraph-granular chunks.
+
+    ``section_text`` is the full section text (heading line + body,
+    including any folded-in doc preamble) — used verbatim as the chunk
+    text when the section is short enough to stay a single chunk, so it
+    keeps reading coherently on its own.
+
+    ``body`` is the section content with the heading line stripped off —
+    used as the basis for paragraph splitting when the section is longer
+    than ``_MAX_PARAGRAPHS_PER_CHUNK`` paragraphs.
+
+    Every chunk gets a stable, unique ``id`` of the form
+    ``"<filename>#<section title>#<index>"``.
+    """
+    paragraphs = _split_into_paragraphs(body)
+
+    if len(paragraphs) <= _MAX_PARAGRAPHS_PER_CHUNK:
+        return [
+            {
+                "id": f"{source}#{section_title}#0",
+                "source": source,
+                "section": section_title,
+                "text": section_text,
+            }
+        ]
+
+    return [
+        {
+            "id": f"{source}#{section_title}#{idx}",
+            "source": source,
+            "section": section_title,
+            "text": paragraph,
+        }
+        for idx, paragraph in enumerate(paragraphs)
+    ]
+
 
 def chunk_markdown_file(path: str | Path) -> list[dict]:
-    """Split one markdown file into section-based chunks.
+    """Split one markdown file into paragraph-granular chunks.
 
-    Splitting is done on top-level ``##`` headers (the natural "policy
+    Splitting starts at top-level ``##`` headers (the natural "policy
     section" boundary in this corpus). The document's ``#`` title (if any)
-    is treated as a preamble and prepended to the first chunk so it is not
-    lost. Each returned chunk includes the section heading text so the
-    chunk reads coherently on its own when shown to an LLM.
+    is treated as a preamble and folded into the first section so it is not
+    lost. Any section longer than ``_MAX_PARAGRAPHS_PER_CHUNK`` paragraphs
+    (split on blank lines) is further broken into one chunk per paragraph,
+    so long sections get real retrieval granularity instead of being
+    scored as a single large blob; short sections stay as one chunk
+    (heading + body together) so they still read coherently on their own.
 
-    Returns a list of dicts: ``{"source": <filename>, "section": <title>,
-    "text": <chunk text>}``. No API calls are made here — this function is
-    pure text processing and is exercised directly by
+    Returns a list of dicts: ``{"id": <stable unique id>, "source":
+    <filename>, "section": <heading title, shared by all paragraph-chunks
+    under it>, "text": <chunk text>}``. No API calls are made here — this
+    function is pure text processing and is exercised directly by
     ``test_retrieval.py`` without requiring ``OPENAI_API_KEY``.
     """
     path = Path(path)
@@ -93,7 +150,7 @@ def chunk_markdown_file(path: str | Path) -> list[dict]:
         section_title = title_match.group(1).strip() if title_match else source
         text = raw.strip()
         if text:
-            chunks.append({"source": source, "section": section_title, "text": text})
+            chunks.extend(_make_section_chunks(source, section_title, text, text))
         return chunks
 
     # Anything before the first "##" (the doc title + any preamble text)
@@ -106,12 +163,14 @@ def chunk_markdown_file(path: str | Path) -> list[dict]:
         start = match.start()
         end = matches[i + 1].start() if i + 1 < len(matches) else len(raw)
         section_text = raw[start:end].strip()
+        body = raw[match.end():end].strip()
 
         if i == 0 and preamble:
             section_text = f"{preamble}\n\n{section_text}"
+            body = f"{preamble}\n\n{body}" if body else preamble
 
         if section_text:
-            chunks.append({"source": source, "section": section_title, "text": section_text})
+            chunks.extend(_make_section_chunks(source, section_title, section_text, body))
 
     return chunks
 

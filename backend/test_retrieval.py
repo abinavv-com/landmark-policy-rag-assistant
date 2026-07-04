@@ -50,34 +50,74 @@ def test_docs_present() -> None:
 
 
 def test_chunking_is_reasonable() -> None:
-    print("\n=== Test: chunking produces reasonable section-based chunks ===")
+    print("\n=== Test: chunking produces reasonable paragraph-granular chunks ===")
     total_chunks = 0
     for filename in EXPECTED_DOC_FILES:
         path = DOCS_DIR / filename
         chunks = ingest.chunk_markdown_file(path)
 
-        # Not one giant blob, not one-chunk-per-line. A 400-800 word policy
-        # doc with clear ## section headers should yield somewhere in the
-        # range of 3-12 chunks.
-        assert 3 <= len(chunks) <= 12, (
-            f"{filename}: expected 3-12 chunks, got {len(chunks)}"
+        # Paragraph-level splitting of longer sections should yield
+        # meaningfully more chunks per doc than the old one-chunk-per-##
+        # section scheme (which landed in the 3-12 range per doc). Not one
+        # giant blob, not one-chunk-per-line.
+        assert 6 <= len(chunks) <= 25, (
+            f"{filename}: expected 6-25 chunks, got {len(chunks)}"
         )
 
+        ids_seen = set()
+        sections_to_ids: dict[str, list[str]] = {}
         for chunk in chunks:
             assert chunk["source"] == filename
             assert chunk["section"], f"{filename}: chunk missing section title"
             assert chunk["text"], f"{filename}: chunk has empty text"
+            assert chunk["id"], f"{filename}: chunk missing id"
+            assert chunk["id"] not in ids_seen, (
+                f"{filename}: duplicate chunk id {chunk['id']!r}"
+            )
+            ids_seen.add(chunk["id"])
+            assert chunk["id"].startswith(f"{filename}#{chunk['section']}#"), (
+                f"{filename}: id {chunk['id']!r} does not match "
+                f"'<filename>#<section>#<index>' convention"
+            )
+            sections_to_ids.setdefault(chunk["section"], []).append(chunk["id"])
             # Each chunk should be more than a single line/header fragment.
-            assert len(chunk["text"].split()) >= 5, (
-                f"{filename}: chunk '{chunk['section']}' looks too small "
+            assert len(chunk["text"].split()) >= 3, (
+                f"{filename}: chunk '{chunk['id']}' looks too small "
                 f"({len(chunk['text'].split())} words)"
             )
 
         total_chunks += len(chunks)
         print(f"  {filename}: {len(chunks)} chunks -> "
-              f"{[c['section'] for c in chunks]}")
+              f"{[c['id'] for c in chunks]}")
 
     print(f"PASS: {total_chunks} total chunks across {len(EXPECTED_DOC_FILES)} docs")
+    # Real paragraph-level granularity should push the corpus well above
+    # the old ~27-chunk (one-chunk-per-##-section) baseline.
+    assert total_chunks > 50, (
+        f"expected a meaningful increase over the old ~27-chunk baseline, "
+        f"got {total_chunks}"
+    )
+
+
+def test_chunk_ids_unique_and_sections_consistent() -> None:
+    print("\n=== Test: chunk ids are globally unique; sections are consistent ===")
+    all_chunks = ingest.chunk_all_docs(DOCS_DIR)
+    all_ids = [c["id"] for c in all_chunks]
+    assert len(all_ids) == len(set(all_ids)), "duplicate chunk ids found across corpus"
+
+    # All chunks belonging to the same (source, section) pair must share
+    # the exact same "section" string (paragraph sub-chunks of one section
+    # are grouped under one shared heading).
+    by_key: dict[tuple[str, str], set[str]] = {}
+    for c in all_chunks:
+        key = (c["source"], c["id"].rsplit("#", 1)[0])
+        by_key.setdefault(key, set()).add(c["section"])
+    for key, section_values in by_key.items():
+        assert len(section_values) == 1, (
+            f"chunks under id-prefix {key} disagree on 'section': {section_values}"
+        )
+
+    print(f"PASS: {len(all_ids)} unique chunk ids; sections consistent within each id group")
 
 
 def test_chunk_all_docs_matches_per_file_sum() -> None:
@@ -152,6 +192,7 @@ def main() -> None:
     test_docs_present()
     test_chunking_is_reasonable()
     test_chunk_all_docs_matches_per_file_sum()
+    test_chunk_ids_unique_and_sections_consistent()
     test_retrieval_with_real_embeddings()
     print("\nAll tests completed.")
 

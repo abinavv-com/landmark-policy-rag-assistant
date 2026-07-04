@@ -165,10 +165,18 @@ class RetrievedChunk(BaseModel):
     score: float
 
 
+class ActivationChunk(BaseModel):
+    id: str
+    source: str
+    section: str
+    score: float
+
+
 class AskResponse(BaseModel):
     answer: str
     citations: list[Citation]
     retrieved_chunks: list[RetrievedChunk]
+    activation: list[ActivationChunk]
 
 
 # ---------------------------------------------------------------------------
@@ -234,17 +242,32 @@ async def documents() -> Any:
     """
     Structural view of the docs/ corpus for the frontend's graph/explorer.
 
-    Reuses ingest.chunk_markdown_file (the same ## -section splitter used to
-    build the retrieval index) so the graph the user sees matches exactly
-    what /ask retrieves against — no separate parsing logic to drift out of
-    sync.
+    Reuses ingest.chunk_markdown_file (the same paragraph-granular splitter
+    used to build the retrieval index) so the graph the user sees matches
+    exactly what /ask and /ask's "activation" scores retrieve against — the
+    chunk "id" values returned here are the SAME ids used in
+    rag.retrieve_all()/the /ask "activation" list, so the frontend can build
+    one consistent node graph and match activation scores back onto it by
+    "id". No separate parsing logic to drift out of sync.
+
+    BREAKING CHANGE from the previous shape: each document's chunk list is
+    now under the key "chunks" (was "sections"), and each entry has an "id"
+    field (previously absent) in addition to "section" (previously
+    "title") and "text" (previously "content").
 
     Returns:
         [
           {
             "filename": "returns-and-exchange-policy.md",
             "title": "Returns and Exchange Policy",
-            "sections": [{"title": "Standard Return Window", "content": "..."}]
+            "chunks": [
+              {
+                "id": "returns-and-exchange-policy.md#Standard Return Window#0",
+                "section": "Standard Return Window",
+                "text": "..."
+              },
+              ...
+            ]
           },
           ...
         ]
@@ -258,11 +281,12 @@ async def documents() -> Any:
             title = title_match.group(1).strip() if title_match else md_path.stem
 
             chunks = ingest.chunk_markdown_file(md_path)
-            sections = [
-                {"title": c["section"], "content": c["text"]} for c in chunks
+            doc_chunks = [
+                {"id": c["id"], "section": c["section"], "text": c["text"]}
+                for c in chunks
             ]
             results.append(
-                {"filename": md_path.name, "title": title, "sections": sections}
+                {"filename": md_path.name, "title": title, "chunks": doc_chunks}
             )
     except Exception as exc:  # noqa: BLE001
         logger.exception("Failed to load documents for /documents")
@@ -291,18 +315,34 @@ async def ask(request: AskRequest) -> Any:
             status.HTTP_503_SERVICE_UNAVAILABLE,
         )
 
-    # --- Retrieval -----------------------------------------------------
+    # --- Retrieval -------------------------------------------------------
+    # Score every chunk once via retrieve_all() (a single query-embedding
+    # call), then slice the top-k off that same ranked list for grounding.
+    # This avoids embedding the query twice just to get both a top-k answer
+    # context and a full "activation" list for the frontend's graph.
+    ASK_TOP_K = 3
     try:
-        raw_chunks = rag.retrieve(question, k=3)
+        all_scored_chunks = rag.retrieve_all(question)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Retrieval failed for question: %s", question)
         return _error(f"Retrieval failed: {exc}", status.HTTP_502_BAD_GATEWAY)
 
-    if not raw_chunks:
+    if not all_scored_chunks:
         return _error(
             "No relevant policy content could be retrieved for this question.",
             status.HTTP_404_NOT_FOUND,
         )
+
+    raw_chunks = all_scored_chunks[:ASK_TOP_K]
+    activation = [
+        {
+            "id": c["id"],
+            "source": c["source"],
+            "section": c["section"],
+            "score": c["score"],
+        }
+        for c in all_scored_chunks
+    ]
 
     # --- OpenAI call -----------------------------------------------------
     try:
@@ -366,6 +406,7 @@ async def ask(request: AskRequest) -> Any:
         "answer": answer,
         "citations": clean_citations,
         "retrieved_chunks": raw_chunks,
+        "activation": activation,
     }
 
 

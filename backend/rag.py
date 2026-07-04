@@ -11,22 +11,33 @@ should depend on):
     Re-exported from ``ingest.py`` so callers needing a one-shot "make sure
     the index exists" step don't need to import ``ingest`` directly.
 
-- ``retrieve(query: str, k: int = 3, index_path=None) -> list[dict]``
+- ``retrieve_all(query: str, index_path=None, client=None) -> list[dict]``
     Embed ``query`` with the same OpenAI embedding model used at ingest
     time, compute cosine similarity against every stored chunk vector
-    (plain numpy — no vector DB needed at this corpus size), and return the
-    top-k chunks as a list of dicts:
+    (plain numpy — no vector DB needed at this corpus size), and return
+    EVERY chunk (not just a top-k slice) as a list of dicts, sorted
+    descending by score:
 
         {
-          "score": float,        # cosine similarity, higher is better
-          "source": str,         # e.g. "returns-and-exchange-policy.md"
-          "section": str,        # e.g. "Refund Methods"
-          "text": str,           # full chunk text
+          "id": str,              # e.g. "returns-and-exchange-policy.md#Refund Methods#0"
+          "score": float,         # cosine similarity, higher is better
+          "source": str,          # e.g. "returns-and-exchange-policy.md"
+          "section": str,         # e.g. "Refund Methods"
+          "text": str,            # full chunk text
         }
 
-    Results are sorted descending by score. Raises a ``RuntimeError`` with
-    a clear message if the index has not been built yet (call
-    ``build_index()`` first, or let ``main.py`` do so on startup).
+    This is the "full activation" computation a neural-network-style
+    frontend graph needs: a score for every node, not just the ones that
+    ended up grounding the answer.
+
+- ``retrieve(query: str, k: int = 3, index_path=None, client=None) -> list[dict]``
+    Thin wrapper around ``retrieve_all``: returns just the top-k highest
+    scoring chunks (``retrieve_all(...)[:k]``). This is what should be fed
+    to the LLM as grounding context.
+
+    Raises a ``RuntimeError`` with a clear message if the index has not
+    been built yet (call ``build_index()`` first, or let ``main.py`` do so
+    on startup).
 
 Requires ``OPENAI_API_KEY`` in the environment for the query-embedding
 call. Building the index itself (``ingest.build_index``) also requires it.
@@ -56,7 +67,7 @@ except ImportError:  # pragma: no cover - fallback for non-package execution
         build_index,
     )
 
-__all__ = ["retrieve", "index_exists", "build_index", "load_index"]
+__all__ = ["retrieve", "retrieve_all", "index_exists", "build_index", "load_index"]
 
 
 def index_exists(index_path: str | Path = DEFAULT_INDEX_PATH) -> bool:
@@ -106,20 +117,25 @@ def _cosine_similarity(query_vec: np.ndarray, matrix: np.ndarray) -> np.ndarray:
     return matrix_norms @ query_norm
 
 
-def retrieve(
+def retrieve_all(
     query: str,
-    k: int = 3,
     index_path: str | Path = DEFAULT_INDEX_PATH,
     client=None,
 ) -> list[dict]:
-    """Retrieve the top-k most relevant chunks for ``query``.
+    """Score EVERY stored chunk against ``query`` — the "full activation" set.
 
-    Embeds ``query`` via OpenAI's ``text-embedding-3-small`` (the same
+    Embeds ``query`` once via OpenAI's ``text-embedding-3-small`` (the same
     model used to build the index), scores every stored chunk by cosine
-    similarity, and returns the top-k as a list of dicts sorted by
+    similarity, and returns all of them as a list of dicts sorted by
     descending score:
 
-        [{"score": 0.83, "source": "...md", "section": "...", "text": "..."}, ...]
+        [{"id": "...md#Section#0", "score": 0.83, "source": "...md",
+          "section": "...", "text": "..."}, ...]
+
+    This is the same computation ``retrieve()`` uses internally, just
+    without truncating to top-k — intended for a frontend that wants to
+    render every chunk's activation score (e.g. a neural-network-style
+    graph), not only the ones that ended up grounding the answer.
 
     Raises RuntimeError if the index has not been built yet, or if
     OPENAI_API_KEY is missing from the environment.
@@ -132,14 +148,32 @@ def retrieve(
     query_vec = _embed_query(query, client=client)
     scores = _cosine_similarity(query_vec, embeddings)
 
-    top_k_idx = np.argsort(-scores)[:k]
+    ranked_idx = np.argsort(-scores)
 
     return [
         {
+            "id": records[i].get("id", f"{records[i]['source']}#{records[i]['section']}#{i}"),
             "score": float(scores[i]),
             "source": records[i]["source"],
             "section": records[i]["section"],
             "text": records[i]["text"],
         }
-        for i in top_k_idx
+        for i in ranked_idx
     ]
+
+
+def retrieve(
+    query: str,
+    k: int = 3,
+    index_path: str | Path = DEFAULT_INDEX_PATH,
+    client=None,
+) -> list[dict]:
+    """Retrieve the top-k most relevant chunks for ``query``.
+
+    Thin wrapper around ``retrieve_all``: returns just the highest-scoring
+    ``k`` chunks (``retrieve_all(...)[:k]``), sorted descending by score.
+
+    Raises RuntimeError if the index has not been built yet, or if
+    OPENAI_API_KEY is missing from the environment.
+    """
+    return retrieve_all(query, index_path=index_path, client=client)[:k]
