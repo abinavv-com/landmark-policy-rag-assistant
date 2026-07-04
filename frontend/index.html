@@ -26,6 +26,10 @@
     --node-sec: #6e727c;
     --node-sec-dim: #4a4d54;
     --node-query: #DAA900;
+    --node-candidate: #c9932b;
+    --node-candidate-dim: #4f4530;
+    --node-finalist: #e6b93c;
+    --node-finalist-dim: #5c4d28;
     --edge: #35353c;
     --edge-bright: #55555f;
   }
@@ -191,6 +195,25 @@
 
   #graph-svg { width: 100%; height: 100%; cursor: grab; }
   #graph-svg:active { cursor: grabbing; }
+
+  #viewport-g.animated { transition: transform 0.5s ease; }
+
+  .graph-reset-btn {
+    position: absolute;
+    top: 10px;
+    right: 12px;
+    z-index: 6;
+    background: var(--ob-panel-alt);
+    border: 1px solid var(--ob-border);
+    color: var(--ob-text-dim);
+    font-family: var(--font-brand);
+    font-size: 10.5px;
+    letter-spacing: 0.03em;
+    padding: 4px 10px;
+    border-radius: 5px;
+    cursor: pointer;
+  }
+  .graph-reset-btn:hover { color: var(--ob-text); border-color: var(--brand-gold); }
 
   .graph-hint {
     position: absolute;
@@ -474,9 +497,12 @@
       <span><i style="background:var(--node-query)"></i>query</span>
       <span><i style="background:var(--node-doc-dim)"></i>document</span>
       <span><i style="background:var(--node-sec-dim)"></i>chunk</span>
+      <span><i style="background:var(--node-candidate)"></i>candidate</span>
+      <span><i style="background:var(--node-finalist)"></i>selected</span>
       <span><i style="background:var(--brand-gold)"></i>activated</span>
     </div>
-    <div class="graph-hint">hover a node to trace its links · click to open in reading pane · ask a question to watch the network activate</div>
+    <button type="button" id="graph-reset-btn" class="graph-reset-btn" title="Reset zoom/pan">⤢ Fit</button>
+    <div class="graph-hint">scroll to zoom · drag background to pan · hover a node to trace its links · click to open in reading pane · ask a question to watch the network activate</div>
     <div class="graph-banner" id="graph-banner">
       <div class="big">Backend not reachable</div>
       <div class="small">
@@ -517,7 +543,20 @@
   var thinkingTimer = null;  // caps the answer-node "listening" pulse loop
   var activeRequestId = 0;   // guards against overlapping /ask calls animating over each other
 
-  var W = 1320, H = 900;
+  var W = 2000, H = 900;
+
+  // Fixed slot counts for the two new narrowing layers (Candidates / Selected).
+  // Positions are static and always rendered (as dim "empty" placeholders) so
+  // the funnel shape reads as a permanent structural feature of the graph,
+  // not something that appears only mid-query.
+  var MAX_CANDIDATES = 30;
+  var MAX_FINALISTS = 5;
+  var candidateSlotIds = [];
+  var finalistSlotIds = [];
+
+  // Zoom/pan state for the SVG viewport group.
+  var MIN_ZOOM = 0.4, MAX_ZOOM = 4;
+  var viewState = { scale: 1, tx: 0, ty: 0 };
 
   // ---------------------------------------------------------------------
   // Tiny deterministic PRNG (seeded by string) so layout is stable across
@@ -650,6 +689,8 @@
   function buildGraph(docs) {
     nodes = {};
     edges = [];
+    candidateSlotIds = [];
+    finalistSlotIds = [];
 
     nodes["query"] = { id: "query", kind: "query", x: 55, y: H / 2, r: 15, label: "Query" };
     nodes["answer"] = { id: "answer", kind: "answer", x: W - 55, y: H / 2, r: 15, label: "Answer" };
@@ -657,7 +698,9 @@
     var docCount = Math.max(docs.length, 1);
     var hubX = 250;
     var chunkStartX = 400;
-    var chunkEndX = W - 190;
+    var chunkEndX = 1160;
+    var candidateX = 1400;
+    var finalistX = 1680;
     var topMargin = 50, bottomMargin = 50;
     var availH = H - topMargin - bottomMargin;
     var hubSpacing = availH / docCount;
@@ -698,6 +741,31 @@
         edges.push({ a: docId, b: chunkId, kind: "doc-chunk" });
       });
     });
+
+    // Layer B — "Candidates" (~stage2_rerank). Static, evenly spaced slots;
+    // dim/empty until a query assigns real chunks into them.
+    var candSpacing = availH / MAX_CANDIDATES;
+    for (var ci = 0; ci < MAX_CANDIDATES; ci++) {
+      var candId = "cand:" + ci;
+      candidateSlotIds.push(candId);
+      nodes[candId] = {
+        id: candId, kind: "candidate", x: candidateX,
+        y: topMargin + candSpacing * ci + candSpacing / 2, r: 5,
+        label: "", readable: false, assignedRawId: null
+      };
+    }
+
+    // Layer C — "Selected" (~stage3_selected, the final grounding context).
+    var finSpacing = availH / MAX_FINALISTS;
+    for (var fi = 0; fi < MAX_FINALISTS; fi++) {
+      var finId = "fin:" + fi;
+      finalistSlotIds.push(finId);
+      nodes[finId] = {
+        id: finId, kind: "finalist", x: finalistX,
+        y: topMargin + finSpacing * fi + finSpacing / 2, r: 6.5,
+        label: "", readable: false, assignedRawId: null
+      };
+    }
   }
 
   // ---------------------------------------------------------------------
@@ -706,6 +774,7 @@
   var svgNS = "http://www.w3.org/2000/svg";
   var svg = document.getElementById("graph-svg");
   var gEdges, gFlow, gNodes;
+  var viewportG, bgRect;
 
   function svgEl(tag, attrs) {
     var el = document.createElementNS(svgNS, tag);
@@ -713,15 +782,106 @@
     return el;
   }
 
-  function renderGraph() {
+  // -----------------------------------------------------------------------
+  // Pan/zoom — a single <g id="viewport-g"> wraps everything (edges/flow/
+  // nodes) and is transformed on wheel/drag. The outer <svg> viewBox never
+  // changes, so this is purely a transform update, not a layout rebuild:
+  // cheap even with ~500+ nodes. Node click/hover listeners live on the
+  // actual SVG elements, so hit-testing keeps working natively at any
+  // zoom/pan level without any manual coordinate math.
+  // -----------------------------------------------------------------------
+  function setupViewport() {
     svg.setAttribute("viewBox", "0 0 " + W + " " + H);
-    svg.innerHTML = "";
+
+    bgRect = svgEl("rect", {
+      x: 0, y: 0, width: W, height: H,
+      fill: "transparent"
+    });
+    svg.appendChild(bgRect);
+
+    viewportG = svgEl("g", { id: "viewport-g" });
+    svg.appendChild(viewportG);
+
+    applyViewTransform();
+
+    var dragging = false;
+    var dragStart = null;   // {x,y} in viewBox space
+    var dragOrigin = null;  // {tx,ty} at drag start
+
+    function svgPoint(evt) {
+      var pt = svg.createSVGPoint();
+      pt.x = evt.clientX;
+      pt.y = evt.clientY;
+      var ctm = svg.getScreenCTM();
+      if (!ctm) return { x: 0, y: 0 };
+      var p = pt.matrixTransform(ctm.inverse());
+      return { x: p.x, y: p.y };
+    }
+
+    svg.addEventListener("wheel", function (evt) {
+      evt.preventDefault();
+      viewportG.classList.remove("animated");
+      var p = svgPoint(evt);
+      // graph-space point currently under the cursor, before rescaling
+      var gx = (p.x - viewState.tx) / viewState.scale;
+      var gy = (p.y - viewState.ty) / viewState.scale;
+      var factor = evt.deltaY < 0 ? 1.15 : 1 / 1.15;
+      var newScale = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, viewState.scale * factor));
+      viewState.tx = p.x - gx * newScale;
+      viewState.ty = p.y - gy * newScale;
+      viewState.scale = newScale;
+      applyViewTransform();
+    }, { passive: false });
+
+    bgRect.addEventListener("mousedown", function (evt) {
+      dragging = true;
+      viewportG.classList.remove("animated");
+      dragStart = svgPoint(evt);
+      dragOrigin = { tx: viewState.tx, ty: viewState.ty };
+      svg.style.cursor = "grabbing";
+    });
+    window.addEventListener("mousemove", function (evt) {
+      if (!dragging) return;
+      var p = svgPoint(evt);
+      viewState.tx = dragOrigin.tx + (p.x - dragStart.x);
+      viewState.ty = dragOrigin.ty + (p.y - dragStart.y);
+      applyViewTransform();
+    });
+    window.addEventListener("mouseup", function () {
+      if (dragging) { dragging = false; svg.style.cursor = ""; }
+    });
+
+    document.getElementById("graph-reset-btn").addEventListener("click", function () {
+      resetView();
+    });
+  }
+
+  function applyViewTransform() {
+    viewportG.style.transform =
+      "translate(" + viewState.tx + ", " + viewState.ty + ") scale(" + viewState.scale + ")";
+    viewportG.style.transformOrigin = "0 0";
+  }
+
+  function animateViewTo(tx, ty, scale) {
+    viewportG.classList.add("animated");
+    viewState.tx = tx; viewState.ty = ty; viewState.scale = scale;
+    applyViewTransform();
+    setTimeout(function () { viewportG.classList.remove("animated"); }, 550);
+  }
+
+  function resetView() {
+    animateViewTo(0, 0, 1);
+  }
+
+  function renderGraph() {
+    if (!viewportG) setupViewport();
+    viewportG.innerHTML = "";
     gEdges = svgEl("g", { id: "edges" });
     gFlow = svgEl("g", { id: "flow-edges" });
     gNodes = svgEl("g", { id: "nodes" });
-    svg.appendChild(gEdges);
-    svg.appendChild(gFlow);
-    svg.appendChild(gNodes);
+    viewportG.appendChild(gEdges);
+    viewportG.appendChild(gFlow);
+    viewportG.appendChild(gNodes);
 
     edges.forEach(function (e) {
       var a = nodes[e.a], b = nodes[e.b];
@@ -772,11 +932,15 @@
   function baseFillFor(n) {
     if (n.kind === "doc") return "var(--node-doc-dim)";
     if (n.kind === "chunk") return "var(--node-sec-dim)";
+    if (n.kind === "candidate") return "var(--node-candidate-dim)";
+    if (n.kind === "finalist") return "var(--node-finalist-dim)";
     return "var(--node-doc-dim)"; // query/answer use CSS classes for fill instead
   }
   function baseOpacityFor(n) {
     if (n.kind === "doc") return 0.55;
     if (n.kind === "chunk") return 0.32;
+    if (n.kind === "candidate") return 0.16;
+    if (n.kind === "finalist") return 0.16;
     return null; // query/answer opacity comes from CSS classes
   }
 
@@ -828,13 +992,13 @@
   function panToNode(id) {
     var n = nodes[id];
     if (!n) return;
-    var scale = 1.6;
-    var vx = Math.max(0, Math.min(W - W / scale, n.x - (W / scale) / 2));
-    var vy = Math.max(0, Math.min(H - H / scale, n.y - (H / scale) / 2));
-    svg.setAttribute("viewBox", vx + " " + vy + " " + (W / scale) + " " + (H / scale));
+    var scale = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, 1.6));
+    var tx = W / 2 - n.x * scale;
+    var ty = H / 2 - n.y * scale;
+    animateViewTo(tx, ty, scale);
     setTimeout(function () {
-      svg.setAttribute("viewBox", "0 0 " + W + " " + H);
-    }, 1600);
+      resetView();
+    }, 1800);
   }
 
   function markSelected(id) {
@@ -851,6 +1015,10 @@
     return gNodes.querySelector('.node-circle[data-id="' + cssEscape(id) + '"]');
   }
 
+  function nodeLabel(id) {
+    return gNodes.querySelector('.node-label[data-id="' + cssEscape(id) + '"]');
+  }
+
   // ---------------------------------------------------------------------
   // Activation visuals — driven entirely by real per-chunk cosine-similarity
   // scores returned in /ask's `activation` array. Nothing here is canned:
@@ -863,7 +1031,7 @@
       var id = c.getAttribute("data-id");
       var n = nodes[id];
       if (!n) return;
-      if (n.kind === "doc" || n.kind === "chunk") {
+      if (n.kind === "doc" || n.kind === "chunk" || n.kind === "candidate" || n.kind === "finalist") {
         c.style.fill = baseFillFor(n);
         c.style.opacity = baseOpacityFor(n);
         c.style.transform = "";
@@ -877,6 +1045,22 @@
     });
     gFlow.innerHTML = "";
     document.querySelectorAll(".sec-row.cited").forEach(function (el) { el.classList.remove("cited"); });
+
+    // Reset the two narrowing layers back to empty placeholder slots — any
+    // chunk identity assigned to them from a previous question is cleared
+    // so a stale click can't open the wrong content mid-transition.
+    candidateSlotIds.concat(finalistSlotIds).forEach(function (slotId) {
+      var slot = nodes[slotId];
+      if (!slot) return;
+      slot.readable = false;
+      slot.assignedRawId = null;
+      slot.content = null;
+      slot.docTitle = null;
+      slot.sectionTitle = null;
+      slot.filename = null;
+      var label = nodeLabel(slotId);
+      if (label) label.textContent = "";
+    });
   }
 
   function resetQueryAndAnswer() {
@@ -932,24 +1116,45 @@
     if (a) a.classList.remove("listening");
   }
 
-  // Runs the full propagation sequence once a real /ask response (with
-  // `activation` scores) has landed. Returns the list of winning node ids
-  // it marked as "cited" so the caller can wire chat citation clicks.
-  function runActivationSequence(activation, winningNodeIds, requestId) {
-    if (!activation || !activation.length) return;
+  // Runs the full multi-stage propagation sequence once a real /ask response
+  // has landed. This reads as a genuine forward pass through the pipeline:
+  //   Query -> Document hubs -> ALL chunks (stage1_embedding)
+  //          -> Candidates (stage2_rerank, ~25-30)
+  //          -> Selected (stage3_selected, ~5)
+  //          -> Answer
+  // Each stage is computed from the last with a short stagger, and chunks
+  // that don't survive a narrowing step visibly dim back down. Everything
+  // here is driven by the real per-question `pipeline` data — different
+  // questions produce different hub emphasis and different Candidate/
+  // Selected membership every time.
+  //
+  // `pipelineData` is normalized by the caller to always have the shape
+  // { stage1: [...], stage2: [...], stage3: [...] } regardless of whether
+  // the backend already returned the new `pipeline` object or the frontend
+  // had to synthesize stage2/stage3 from the older flat `activation` +
+  // `retrieved_chunks` fields.
+  //
+  // `onFinalized` fires exactly once, right as the Answer node's final glow
+  // lands — the caller uses it to reveal the chat answer text in sync with
+  // the graph rather than dumping it in immediately.
+  function runActivationSequence(pipelineData, winningNodeIds, requestId, onFinalized) {
+    var stage1 = pipelineData.stage1 || [];
+    var stage2 = pipelineData.stage2 || [];
+    var stage3 = pipelineData.stage3 || [];
+    if (!stage1.length) { if (onFinalized) onFinalized(); return; }
 
     // --- per-chunk normalized scores (0..1 across the WHOLE corpus) -----
-    var allScores = activation.map(function (a) { return a.score; });
+    var allScores = stage1.map(function (a) { return a.score; });
     var normalize = minMaxNormalize(allScores);
     var scoreByRawId = {};
-    activation.forEach(function (a) { scoreByRawId[a.id] = a.score; });
+    stage1.forEach(function (a) { scoreByRawId[a.id] = a.score; });
 
     // --- per-document hub average, then normalized across the 6 hubs ----
     var docIds = Object.keys(nodes).filter(function (id) { return nodes[id].kind === "doc"; });
     var hubRaw = {};
     docIds.forEach(function (docId) {
       var filename = nodes[docId].filename;
-      var scores = activation.filter(function (a) { return a.source === filename; }).map(function (a) { return a.score; });
+      var scores = stage1.filter(function (a) { return a.source === filename; }).map(function (a) { return a.score; });
       hubRaw[docId] = scores.length ? (scores.reduce(function (s, v) { return s + v; }, 0) / scores.length) : 0;
     });
     var hubNormalize = minMaxNormalize(Object.keys(hubRaw).map(function (k) { return hubRaw[k]; }));
@@ -1002,28 +1207,146 @@
     });
 
     var chunkWaveEnd = hubWaveEnd + 14 * 12 + 80;
+    var STAGE_GAP = 320;     // pause between each narrowing step, so it reads as sequential
+    var FINAL_GLOW_DELAY = 300;
 
-    // Step 4: mark winning (top-k / cited) chunks and draw a flowing signal
-    // from each of them onward to the Answer node, finishing with Answer
-    // lighting up. This is the moment "the answer emerges from wherever the
-    // signal converged."
+    var candidateSlotByRawId = {}; // rawId -> "cand:N" slot it landed in, this round
+
+    function dimBack(id) {
+      var n = nodes[id];
+      var c = nodeCircle(id);
+      if (!n || !c) return;
+      c.style.fill = baseFillFor(n);
+      c.style.opacity = baseOpacityFor(n);
+      c.style.transform = "";
+      c.style.filter = "";
+    }
+
+    function litColor(item, normv) {
+      return { fill: activationColor(normv), opacity: 0.5 + normv * 0.5, scale: 1 + normv * 0.6 };
+    }
+
+    // Step 3: chunks -> Candidates (stage2_rerank). Survivors' lines flow
+    // forward into a Candidate slot; everyone else dims back down — the
+    // first real narrowing of the bottleneck.
+    var stage3StartDelay = chunkWaveEnd + STAGE_GAP;
     setTimeout(function () {
       if (requestId !== activeRequestId) return;
+      var stage2ById = {};
+      stage2.forEach(function (it) { stage2ById[it.id] = it; });
+
+      chunkIds.forEach(function (chunkId) {
+        var rawId = nodes[chunkId].rawId;
+        if (!stage2ById.hasOwnProperty(rawId)) dimBack(chunkId);
+      });
+
+      var scores2 = stage2.map(function (it) { return it.rerank_score; });
+      var normalize2 = minMaxNormalize(scores2);
+
+      stage2.slice(0, candidateSlotIds.length).forEach(function (item, i) {
+        var slotId = candidateSlotIds[i];
+        var slot = nodes[slotId];
+        var srcNode = nodes["chunk:" + item.id];
+        var normv = normalize2(item.rerank_score);
+
+        slot.readable = true;
+        slot.assignedRawId = item.id;
+        slot.filename = item.source;
+        slot.sectionTitle = item.section;
+        slot.docTitle = (srcNode && srcNode.docTitle) || item.source;
+        slot.content = (srcNode && srcNode.content) || "";
+        candidateSlotByRawId[item.id] = slotId;
+
+        var lit = litColor(item, normv);
+        var circle = nodeCircle(slotId);
+        if (circle) {
+          circle.style.fill = lit.fill;
+          circle.style.opacity = String(lit.opacity);
+          circle.style.transform = "scale(" + lit.scale + ")";
+        }
+        var label = nodeLabel(slotId);
+        if (label) label.textContent = item.section;
+
+        if (srcNode) {
+          gFlow.appendChild(svgEl("line", {
+            x1: srcNode.x, y1: srcNode.y, x2: slot.x, y2: slot.y, class: "edge-line flow"
+          }));
+        }
+      });
+    }, stage3StartDelay);
+
+    // Step 4: Candidates -> Selected (stage3_selected). Same narrowing
+    // language again, one column further in.
+    var stage4StartDelay = stage3StartDelay + STAGE_GAP;
+    setTimeout(function () {
+      if (requestId !== activeRequestId) return;
+      var stage3ById = {};
+      stage3.forEach(function (it) { stage3ById[it.id] = it; });
+
+      candidateSlotIds.forEach(function (slotId) {
+        var slot = nodes[slotId];
+        if (slot.assignedRawId && !stage3ById.hasOwnProperty(slot.assignedRawId)) dimBack(slotId);
+      });
+
+      var scores3 = stage3.map(function (it) { return it.rerank_score; });
+      var normalize3 = minMaxNormalize(scores3);
+
+      stage3.slice(0, finalistSlotIds.length).forEach(function (item, i) {
+        var slotId = finalistSlotIds[i];
+        var slot = nodes[slotId];
+        var srcSlotId = candidateSlotByRawId[item.id];
+        var srcNode = srcSlotId ? nodes[srcSlotId] : nodes["chunk:" + item.id];
+        var normv = normalize3(item.rerank_score);
+
+        slot.readable = true;
+        slot.assignedRawId = item.id;
+        slot.filename = item.source;
+        slot.sectionTitle = item.section;
+        slot.docTitle = (srcNode && srcNode.docTitle) || item.source;
+        slot.content = (srcNode && srcNode.content) || "";
+
+        var lit = litColor(item, normv);
+        var circle = nodeCircle(slotId);
+        if (circle) {
+          circle.style.fill = lit.fill;
+          circle.style.opacity = String(lit.opacity);
+          circle.style.transform = "scale(" + lit.scale + ")";
+        }
+        var label = nodeLabel(slotId);
+        if (label) label.textContent = item.section;
+
+        if (srcNode) {
+          gFlow.appendChild(svgEl("line", {
+            x1: srcNode.x, y1: srcNode.y, x2: slot.x, y2: slot.y, class: "edge-line flow"
+          }));
+        }
+      });
+    }, stage4StartDelay);
+
+    // Step 5: Selected -> Answer. The final convergence — Answer lights up
+    // once every winning line has landed on it.
+    var stage5StartDelay = stage4StartDelay + STAGE_GAP;
+    setTimeout(function () {
+      if (requestId !== activeRequestId) return;
+      var answerNode = nodes["answer"];
+
+      finalistSlotIds.forEach(function (slotId) {
+        var slot = nodes[slotId];
+        if (!slot.assignedRawId) return;
+        var circle = nodeCircle(slotId);
+        if (circle) circle.classList.add("cited");
+        gFlow.appendChild(svgEl("line", {
+          x1: slot.x, y1: slot.y, x2: answerNode.x, y2: answerNode.y, class: "edge-line flow"
+        }));
+      });
+
+      // Also mark the underlying chunk/sidebar entries so the sidebar and
+      // citation-click behavior stay consistent with the graph's winners.
       winningNodeIds.forEach(function (id) {
         var circle = nodeCircle(id);
         if (circle) circle.classList.add("cited");
         var row = document.querySelector('.sec-row[data-id="' + cssEscape(id) + '"]');
         if (row) row.classList.add("cited");
-
-        var n = nodes[id];
-        var answerNode = nodes["answer"];
-        if (n && answerNode) {
-          var path = svgEl("line", {
-            x1: n.x, y1: n.y, x2: answerNode.x, y2: answerNode.y,
-            class: "edge-line flow"
-          });
-          gFlow.appendChild(path);
-        }
       });
 
       setTimeout(function () {
@@ -1031,8 +1354,9 @@
         endListening();
         var a = nodeCircle("answer");
         if (a) a.classList.add("ready");
-      }, 550);
-    }, chunkWaveEnd);
+        if (typeof onFinalized === "function") onFinalized();
+      }, FINAL_GLOW_DELAY);
+    }, stage5StartDelay);
   }
 
   // ---------------------------------------------------------------------
@@ -1118,18 +1442,21 @@
       pane.innerHTML =
         '<div class="crumb">' + escapeHtml(n.filename) + "</div>" +
         "<h1>" + escapeHtml(n.label) + "</h1>" + secsHtml;
-    } else if (n.kind === "chunk") {
+    } else if (n.kind === "chunk" || ((n.kind === "candidate" || n.kind === "finalist") && n.readable)) {
       pane.innerHTML =
         '<div class="crumb">' + escapeHtml(n.docTitle) + " &rarr; " + escapeHtml(n.sectionTitle) + "</div>" +
         renderMarkdown(n.content);
     } else {
-      pane.innerHTML = '<div class="empty">' + escapeHtml(n.label) + " node — not a document section.</div>";
+      pane.innerHTML = '<div class="empty">' + escapeHtml(n.label || n.kind) + " node — not a document section.</div>";
     }
   }
 
   function selectNode(id, doPan) {
     var n = nodes[id];
-    if (!n || (n.kind !== "doc" && n.kind !== "chunk")) return;
+    if (!n) return;
+    var isReadable = n.kind === "doc" || n.kind === "chunk" ||
+      ((n.kind === "candidate" || n.kind === "finalist") && n.readable);
+    if (!isReadable) return;
     selectedNodeId = id;
     markSelected(id);
     highlightSidebarActive(id);
@@ -1288,9 +1615,40 @@
         chatHistory.push({ role: "user", content: question });
         chatHistory.push({ role: "assistant", content: data.answer });
 
-        var activation = data.activation || [];
+        // --- Normalize the pipeline contract -----------------------------
+        // Prefer the new `pipeline` object (stage1_embedding/stage2_rerank/
+        // stage3_selected). If the backend hasn't shipped it yet, fall back
+        // to the older flat `activation` field as stage1 and synthesize a
+        // plausible stage2/stage3 so the funnel still narrows meaningfully
+        // in the meantime (top ~28 by embedding score -> the actual top-k
+        // used to ground the answer).
+        var pipeline = data.pipeline;
+        var stage1 = (pipeline && pipeline.stage1_embedding) ? pipeline.stage1_embedding : (data.activation || []);
+        var stage2 = pipeline && pipeline.stage2_rerank;
+        var stage3 = pipeline && pipeline.stage3_selected;
+
+        if (!stage2 || !stage3) {
+          var byScoreDesc = stage1.slice().sort(function (a, b) { return b.score - a.score; });
+          if (!stage2) {
+            stage2 = byScoreDesc.slice(0, Math.min(28, byScoreDesc.length)).map(function (a) {
+              return { id: a.id, source: a.source, section: a.section, embedding_score: a.score, keyword_score: 0, rerank_score: a.score };
+            });
+          }
+          if (!stage3) {
+            var top = (data.retrieved_chunks && data.retrieved_chunks.length) ? data.retrieved_chunks : byScoreDesc.slice(0, 5);
+            stage3 = top.slice(0, 5).map(function (rc) {
+              var match = stage1.filter(function (a) { return a.source === rc.source && a.section === rc.section; })[0];
+              return {
+                id: (match && match.id) || (rc.source + "#" + rc.section),
+                source: rc.source, section: rc.section,
+                rerank_score: rc.score != null ? rc.score : (match ? match.score : 0)
+              };
+            });
+          }
+        }
+
         var activationByRawId = {};
-        activation.forEach(function (a) { activationByRawId[a.id] = a.score; });
+        stage1.forEach(function (a) { activationByRawId[a.id] = a.score; });
 
         var retrieved = (data.retrieved_chunks && data.retrieved_chunks.length) ? data.retrieved_chunks : (data.citations || []);
         var winningNodeIds = [];
@@ -1299,31 +1657,41 @@
           if (nid && winningNodeIds.indexOf(nid) === -1) winningNodeIds.push(nid);
         });
 
-        runActivationSequence(activation, winningNodeIds, requestId);
+        runActivationSequence(
+          { stage1: stage1, stage2: stage2, stage3: stage3 },
+          winningNodeIds,
+          requestId,
+          function onFinalized() {
+            // Reveal the chat answer in sync with the Answer node's final
+            // glow, once the graph's forward pass has actually reached it —
+            // the data was already in hand, this just paces the reveal.
+            if (requestId !== activeRequestId) return;
 
-        var citeHtml = "";
-        (data.citations || []).forEach(function (c) {
-          var nid = matchWinningChunkNode(
-            { source: c.source, section: c.section, text: "" },
-            activationByRawId
-          );
-          citeHtml +=
-            '<div class="cite-line" data-node="' + (nid || "") + '">Source: ' +
-            escapeHtml(c.source) + " &rarr; " + escapeHtml(c.section) + "</div>";
-        });
+            var citeHtml = "";
+            (data.citations || []).forEach(function (c) {
+              var nid = matchWinningChunkNode(
+                { source: c.source, section: c.section, text: "" },
+                activationByRawId
+              );
+              citeHtml +=
+                '<div class="cite-line" data-node="' + (nid || "") + '">Source: ' +
+                escapeHtml(c.source) + " &rarr; " + escapeHtml(c.section) + "</div>";
+            });
 
-        var msgEl = appendMsg("assistant", escapeHtml(data.answer) + citeHtml);
-        msgEl.querySelectorAll(".cite-line").forEach(function (el) {
-          el.addEventListener("click", function () {
-            var nid = el.getAttribute("data-node");
-            if (nid && nodes[nid]) selectNode(nid, true);
-          });
-        });
+            var msgEl = appendMsg("assistant", escapeHtml(data.answer) + citeHtml);
+            msgEl.querySelectorAll(".cite-line").forEach(function (el) {
+              el.addEventListener("click", function () {
+                var nid = el.getAttribute("data-node");
+                if (nid && nodes[nid]) selectNode(nid, true);
+              });
+            });
 
-        // Auto-open the top winning chunk in the reading pane + pan to it.
-        if (winningNodeIds.length) {
-          selectNode(winningNodeIds[0], true);
-        }
+            // Auto-open the top winning chunk in the reading pane + pan to it.
+            if (winningNodeIds.length) {
+              selectNode(winningNodeIds[0], true);
+            }
+          }
+        );
       })
       .catch(function (err) {
         loadingEl.remove();
