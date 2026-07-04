@@ -857,8 +857,11 @@
   }
 
   function applyViewTransform() {
+    // CSS transform requires units on translate() — bare numbers are invalid
+    // and get silently dropped by the parser, which previously left the
+    // element stuck at its default transform no matter what viewState said.
     viewportG.style.transform =
-      "translate(" + viewState.tx + ", " + viewState.ty + ") scale(" + viewState.scale + ")";
+      "translate(" + viewState.tx + "px, " + viewState.ty + "px) scale(" + viewState.scale + ")";
     viewportG.style.transformOrigin = "0 0";
   }
 
