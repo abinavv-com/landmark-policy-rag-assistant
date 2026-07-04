@@ -31,7 +31,8 @@ import ingest  # noqa: E402
 
 DOCS_DIR = BACKEND_DIR.parent / "docs"
 
-EXPECTED_DOC_FILES = [
+# Core docs that must always be present, regardless of how large the corpus grows.
+CORE_DOC_FILES = [
     "loyalty-program-faq.md",
     "returns-and-exchange-policy.md",
     "shipping-and-delivery-faq.md",
@@ -40,13 +41,17 @@ EXPECTED_DOC_FILES = [
     "warranty-policy.md",
 ]
 
+# The full expected set is derived from disk, not hardcoded, so it stays correct
+# as the corpus grows (currently 51 docs and counting).
+EXPECTED_DOC_FILES = sorted(p.name for p in DOCS_DIR.glob("*.md"))
+
 
 def test_docs_present() -> None:
-    print("\n=== Test: docs/ contains the expected corpus files ===")
+    print("\n=== Test: docs/ contains the core corpus files ===")
     found = sorted(p.name for p in DOCS_DIR.glob("*.md"))
-    missing = [f for f in EXPECTED_DOC_FILES if f not in found]
-    assert not missing, f"Missing expected doc files: {missing}"
-    print(f"PASS: found {len(found)} doc files: {found}")
+    missing = [f for f in CORE_DOC_FILES if f not in found]
+    assert not missing, f"Missing core doc files: {missing}"
+    print(f"PASS: found {len(found)} doc files (>= {len(CORE_DOC_FILES)} core files present)")
 
 
 def test_chunking_is_reasonable() -> None:
@@ -130,6 +135,107 @@ def test_chunk_all_docs_matches_per_file_sum() -> None:
     print(f"PASS: chunk_all_docs() returned {len(all_chunks)} chunks")
 
 
+def test_rerank_stage_keyword_scoring_discriminates() -> None:
+    """
+    Isolates rag.rerank_stage()'s keyword-scoring signal from the embedding
+    signal: requires no OPENAI_API_KEY and no index, since it feeds
+    synthetic candidates with a shared, fixed embedding "score" directly
+    into rerank_stage().
+
+    If keyword_score were a placeholder (e.g. always 0, or a copy of the
+    embedding score), a chunk with heavy exact keyword overlap with the
+    query and a chunk with none would tie. This test asserts they don't:
+    the high-overlap chunk must score strictly higher on keyword_score
+    (and therefore on rerank_score, since embedding_score is identical
+    across all three candidates).
+    """
+    print("\n=== Test: rerank_stage() keyword scoring discriminates on term overlap (no API key needed) ===")
+    import rag  # local import: numpy-only, no openai/network dependency for this path
+
+    query = "warranty appliance repair"
+
+    candidates = [
+        {
+            "id": "doc-a.md#High Overlap#0",
+            "source": "doc-a.md",
+            "section": "High Overlap",
+            # Repeats every query term multiple times.
+            "text": (
+                "This warranty covers appliance repair. If your appliance "
+                "needs repair, the warranty applies to appliance repair costs."
+            ),
+            "score": 0.5,  # identical embedding_score across all candidates
+        },
+        {
+            "id": "doc-b.md#Partial Overlap#1",
+            "source": "doc-b.md",
+            "section": "Partial Overlap",
+            # Shares only one query term ("warranty"), no repetition.
+            "text": "The warranty period begins on the date of purchase.",
+            "score": 0.5,
+        },
+        {
+            "id": "doc-c.md#No Overlap#2",
+            "source": "doc-c.md",
+            "section": "No Overlap",
+            # Shares zero query terms.
+            "text": "Loyalty points can be redeemed in store or online at checkout.",
+            "score": 0.5,
+        },
+    ]
+
+    reranked = rag.rerank_stage(query, candidates, top_n=25)
+    assert len(reranked) == 3, f"expected all 3 candidates back, got {len(reranked)}"
+
+    by_id = {c["id"]: c for c in reranked}
+    high = by_id["doc-a.md#High Overlap#0"]
+    partial = by_id["doc-b.md#Partial Overlap#1"]
+    none_ = by_id["doc-c.md#No Overlap#2"]
+
+    print(f"  high overlap:    keyword_score={high['keyword_score']:.4f}  rerank_score={high['rerank_score']:.4f}")
+    print(f"  partial overlap: keyword_score={partial['keyword_score']:.4f}  rerank_score={partial['rerank_score']:.4f}")
+    print(f"  no overlap:      keyword_score={none_['keyword_score']:.4f}  rerank_score={none_['rerank_score']:.4f}")
+
+    # All three share the same input embedding_score (0.5), so any spread in
+    # keyword_score / rerank_score must come purely from the new keyword
+    # signal doing real, non-placeholder work.
+    assert high["embedding_score"] == partial["embedding_score"] == none_["embedding_score"] == 0.5
+
+    assert high["keyword_score"] > partial["keyword_score"] > 0.0, (
+        "expected strictly more keyword overlap to score strictly higher"
+    )
+    assert none_["keyword_score"] == 0.0, (
+        f"expected zero query-term overlap to score exactly 0.0, got {none_['keyword_score']}"
+    )
+    assert high["rerank_score"] > partial["rerank_score"] > none_["rerank_score"], (
+        "rerank_score must reflect the keyword_score ordering when embedding_score is tied"
+    )
+
+    # Final sort order must follow rerank_score descending.
+    assert [c["id"] for c in reranked] == [high["id"], partial["id"], none_["id"]], (
+        f"rerank_stage() did not sort by rerank_score descending: "
+        f"{[c['id'] for c in reranked]}"
+    )
+
+    print("PASS: rerank_stage() keyword scoring genuinely discriminates on term overlap")
+
+
+def test_select_context_slices_top_k() -> None:
+    print("\n=== Test: select_context() takes the top-k of a pre-ranked list (no API key needed) ===")
+    import rag
+
+    reranked = [
+        {"id": f"chunk-{i}", "source": "x.md", "section": "S", "text": "t",
+         "embedding_score": 1.0 - i * 0.1, "keyword_score": 0.0,
+         "rerank_score": 1.0 - i * 0.1}
+        for i in range(10)
+    ]
+    selected = rag.select_context(reranked, k=5)
+    assert len(selected) == 5
+    assert [c["id"] for c in selected] == [f"chunk-{i}" for i in range(5)]
+    print("PASS: select_context() returns exactly the top-k slice")
+
+
 def test_retrieval_with_real_embeddings() -> None:
     print("\n=== Test: real retrieval (requires OPENAI_API_KEY) ===")
     api_key = os.environ.get("OPENAI_API_KEY")
@@ -193,6 +299,8 @@ def main() -> None:
     test_chunking_is_reasonable()
     test_chunk_all_docs_matches_per_file_sum()
     test_chunk_ids_unique_and_sections_consistent()
+    test_rerank_stage_keyword_scoring_discriminates()
+    test_select_context_slices_top_k()
     test_retrieval_with_real_embeddings()
     print("\nAll tests completed.")
 

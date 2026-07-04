@@ -172,11 +172,41 @@ class ActivationChunk(BaseModel):
     score: float
 
 
+class Stage1Chunk(BaseModel):
+    id: str
+    source: str
+    section: str
+    score: float
+
+
+class Stage2Chunk(BaseModel):
+    id: str
+    source: str
+    section: str
+    embedding_score: float
+    keyword_score: float
+    rerank_score: float
+
+
+class Stage3Chunk(BaseModel):
+    id: str
+    source: str
+    section: str
+    rerank_score: float
+
+
+class PipelineInfo(BaseModel):
+    stage1_embedding: list[Stage1Chunk]
+    stage2_rerank: list[Stage2Chunk]
+    stage3_selected: list[Stage3Chunk]
+
+
 class AskResponse(BaseModel):
     answer: str
     citations: list[Citation]
     retrieved_chunks: list[RetrievedChunk]
     activation: list[ActivationChunk]
+    pipeline: PipelineInfo
 
 
 # ---------------------------------------------------------------------------
@@ -315,25 +345,44 @@ async def ask(request: AskRequest) -> Any:
             status.HTTP_503_SERVICE_UNAVAILABLE,
         )
 
-    # --- Retrieval -------------------------------------------------------
-    # Score every chunk once via retrieve_all() (a single query-embedding
-    # call), then slice the top-k off that same ranked list for grounding.
-    # This avoids embedding the query twice just to get both a top-k answer
-    # context and a full "activation" list for the frontend's graph.
-    ASK_TOP_K = 3
+    # --- Retrieval: 3-stage pipeline -------------------------------------
+    # Stage 1: embed the query once and score every stored chunk by cosine
+    #   similarity (the "full activation" set, for the frontend's graph).
+    # Stage 2: re-rank the top ~25-30 Stage-1 survivors with an independent
+    #   keyword/TF-IDF overlap signal, blended with the embedding score.
+    # Stage 3: take the top-k Stage-2 survivors as the final grounding
+    #   context for the LLM (Stage 4, below).
+    RERANK_TOP_N = 25
+    ASK_TOP_K = 5
     try:
-        all_scored_chunks = rag.retrieve_all(question)
+        stage1_chunks = rag.embedding_stage(question)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Retrieval failed for question: %s", question)
         return _error(f"Retrieval failed: {exc}", status.HTTP_502_BAD_GATEWAY)
 
-    if not all_scored_chunks:
+    if not stage1_chunks:
         return _error(
             "No relevant policy content could be retrieved for this question.",
             status.HTTP_404_NOT_FOUND,
         )
 
-    raw_chunks = all_scored_chunks[:ASK_TOP_K]
+    stage2_chunks = rag.rerank_stage(question, stage1_chunks, top_n=RERANK_TOP_N)
+    stage3_chunks = rag.select_context(stage2_chunks, k=ASK_TOP_K)
+
+    # raw_chunks feeds the LLM prompt and the backward-compatible
+    # `retrieved_chunks` response field. Expose `rerank_score` as `score` so
+    # existing consumers of RetrievedChunk.score keep working, now reflecting
+    # the Stage 3 (post-rerank) selection instead of raw embedding similarity.
+    raw_chunks = [
+        {
+            "text": c["text"],
+            "source": c["source"],
+            "section": c["section"],
+            "score": c["rerank_score"],
+        }
+        for c in stage3_chunks
+    ]
+
     activation = [
         {
             "id": c["id"],
@@ -341,8 +390,40 @@ async def ask(request: AskRequest) -> Any:
             "section": c["section"],
             "score": c["score"],
         }
-        for c in all_scored_chunks
+        for c in stage1_chunks
     ]
+
+    pipeline = {
+        "stage1_embedding": [
+            {
+                "id": c["id"],
+                "source": c["source"],
+                "section": c["section"],
+                "score": c["score"],
+            }
+            for c in stage1_chunks
+        ],
+        "stage2_rerank": [
+            {
+                "id": c["id"],
+                "source": c["source"],
+                "section": c["section"],
+                "embedding_score": c["embedding_score"],
+                "keyword_score": c["keyword_score"],
+                "rerank_score": c["rerank_score"],
+            }
+            for c in stage2_chunks
+        ],
+        "stage3_selected": [
+            {
+                "id": c["id"],
+                "source": c["source"],
+                "section": c["section"],
+                "rerank_score": c["rerank_score"],
+            }
+            for c in stage3_chunks
+        ],
+    }
 
     # --- OpenAI call -----------------------------------------------------
     try:
@@ -407,6 +488,7 @@ async def ask(request: AskRequest) -> Any:
         "citations": clean_citations,
         "retrieved_chunks": raw_chunks,
         "activation": activation,
+        "pipeline": pipeline,
     }
 
 
