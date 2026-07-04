@@ -1,3 +1,6 @@
+<!doctype html>
+<html lang="en">
+<head>
 <title>Policy &amp; Support RAG Assistant</title>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -367,6 +370,8 @@
   ::-webkit-scrollbar-thumb { background: #2a2a30; border-radius: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
 </style>
+</head>
+<body>
 
 <div id="app">
   <header>
@@ -415,7 +420,7 @@
 (function () {
   "use strict";
 
-  var API_BASE = "http://localhost:8010";
+  var API_BASE = window.location.protocol === "file:" ? "http://localhost:8010" : "";
 
   // ---------------------------------------------------------------------
   // State
@@ -965,3 +970,5 @@
   loadAll();
 })();
 </script>
+</body>
+</html>

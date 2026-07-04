@@ -53,7 +53,11 @@ from pathlib import Path
 
 BACKEND_DIR = Path(__file__).resolve().parent
 DEFAULT_DOCS_DIR = BACKEND_DIR.parent / "docs"
-DEFAULT_INDEX_PATH = BACKEND_DIR / "index.json"
+DEFAULT_INDEX_PATH = (
+    Path("/tmp/policy-rag-index.json")
+    if os.environ.get("VERCEL")
+    else BACKEND_DIR / "index.json"
+)
 
 EMBEDDING_MODEL = "text-embedding-3-small"
 
