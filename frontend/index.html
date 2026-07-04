@@ -12,26 +12,32 @@
     --brand-gold-soft: rgba(218, 169, 0, 0.35);
     --font-brand: 'Raleway', system-ui, sans-serif;
 
-    /* Obsidian-dark palette */
-    --ob-bg: #0b0b0d;
-    --ob-panel: #131316;
-    --ob-panel-alt: #17171b;
-    --ob-border: #26262b;
-    --ob-text: #dcdce0;
-    --ob-text-dim: #86868f;
-    --ob-text-faint: #58585f;
+    /* Warm premium-retail palette — same family as the sibling prototype
+       apps (cream/gold/Raleway), re-skinned from the prior dark/technical
+       theme per the "layout stays, skin changes" brief. The graph/pipeline
+       structure below is unchanged; only these tokens moved. */
+    --ob-bg: #FBF7EE;
+    --ob-panel: #FFFDF8;
+    --ob-panel-alt: #F3ECD9;
+    --ob-border: #E4D9BE;
+    --ob-text: #222222;
+    --ob-text-dim: #6B5D4D;
+    --ob-text-faint: #8A7C68;
 
-    --node-doc: #c7cad1;
-    --node-doc-dim: #8b8e96;
-    --node-sec: #6e727c;
-    --node-sec-dim: #4a4d54;
+    /* Structural nodes (document hubs) read as warm terracotta, distinct
+       from the gold "activation" hue, so structure and relevance never
+       share a color meaning. */
+    --node-doc: #9C6B42;
+    --node-doc-dim: #D9C3A8;
+    --node-sec: #B08650;
+    --node-sec-dim: #E6DBC5;
     --node-query: #DAA900;
-    --node-candidate: #c9932b;
-    --node-candidate-dim: #4f4530;
-    --node-finalist: #e6b93c;
-    --node-finalist-dim: #5c4d28;
-    --edge: #35353c;
-    --edge-bright: #55555f;
+    --node-candidate: #C98A2E;
+    --node-candidate-dim: #F0DCB8;
+    --node-finalist: #B8721E;
+    --node-finalist-dim: #EAD0B0;
+    --edge: #E4D9BE;
+    --edge-bright: #C9932B;
   }
 
   * { box-sizing: border-box; }
@@ -113,9 +119,9 @@
     background: var(--ob-text-faint);
     transition: background 0.3s;
   }
-  .status-dot.ok { background: #4caf6b; box-shadow: 0 0 6px rgba(76,175,107,0.6); }
-  .status-dot.bad { background: #d15353; box-shadow: 0 0 6px rgba(209,83,83,0.6); }
-  .status-dot.pending { background: #b98d1f; }
+  .status-dot.ok { background: #1F8F5D; box-shadow: 0 0 6px rgba(31,143,93,0.6); }
+  .status-dot.bad { background: #C23B2E; box-shadow: 0 0 6px rgba(194,59,46,0.6); }
+  .status-dot.pending { background: #C2660C; }
 
   /* ---------------- Sidebar (file explorer) ---------------- */
   #sidebar {
@@ -188,7 +194,7 @@
     grid-area: graph;
     position: relative;
     background:
-      radial-gradient(circle at 50% 40%, #101013 0%, #0b0b0d 70%);
+      radial-gradient(circle at 50% 40%, #FFFDF8 0%, #F3ECD9 70%);
     overflow: hidden;
     border-right: 1px solid var(--ob-border);
   }
@@ -249,7 +255,7 @@
     gap: 10px;
     text-align: center;
     padding: 20px;
-    background: rgba(11,11,13,0.9);
+    background: rgba(251,247,238,0.92);
     z-index: 5;
   }
   .graph-banner.show { display: flex; }
@@ -389,9 +395,9 @@
     margin: 18px 0 8px;
     color: var(--ob-text);
   }
-  #reading p { font-size: 13px; line-height: 1.65; color: #c6c6cc; margin: 8px 0; }
+  #reading p { font-size: 13px; line-height: 1.65; color: var(--ob-text-dim); margin: 8px 0; }
   #reading ul { padding-left: 18px; margin: 8px 0; }
-  #reading li { font-size: 13px; line-height: 1.6; color: #c6c6cc; margin: 4px 0; }
+  #reading li { font-size: 13px; line-height: 1.6; color: var(--ob-text-dim); margin: 4px 0; }
   #reading b, #reading strong { color: var(--ob-text); font-weight: 700; }
 
   /* ---------------- Chat dock ---------------- */
@@ -422,7 +428,7 @@
     align-self: flex-start;
     background: var(--ob-panel);
     border: 1px solid var(--ob-border);
-    color: #cfcfd4;
+    color: var(--ob-text);
   }
   .msg.loading { color: var(--ob-text-dim); font-style: italic; }
   .msg .cite-line {
@@ -432,7 +438,7 @@
     cursor: pointer;
   }
   .msg .cite-line:hover { text-decoration: underline; }
-  .msg.error { border-color: #7a3a3a; color: #e2a3a3; background: rgba(200,80,80,0.08); }
+  .msg.error { border-color: #C23B2E; color: #8A2E23; background: rgba(194,59,46,0.08); }
 
   #chat-form {
     display: flex;
@@ -467,7 +473,7 @@
   #chat-send:disabled { opacity: 0.4; cursor: not-allowed; }
 
   ::-webkit-scrollbar { width: 8px; height: 8px; }
-  ::-webkit-scrollbar-thumb { background: #2a2a30; border-radius: 4px; }
+  ::-webkit-scrollbar-thumb { background: #D9C9A8; border-radius: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
 </style>
 </head>
@@ -1078,7 +1084,7 @@
 
   // interpolate dim-gray -> warm gold as activation norm goes 0 -> 1
   function activationColor(norm) {
-    var from = [74, 77, 84];   // --node-sec-dim
+    var from = [230, 219, 197]; // --node-sec-dim
     var to = [218, 169, 0];    // --brand-gold
     var r = Math.round(lerp(from[0], to[0], norm));
     var g = Math.round(lerp(from[1], to[1], norm));
