@@ -1,0 +1,967 @@
+<title>Policy &amp; Support RAG Assistant</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Raleway:wght@400;500;600;700;800&display=swap');
+
+  :root {
+    --brand-gold: #DAA900;
+    --brand-gold-soft: rgba(218, 169, 0, 0.35);
+    --font-brand: 'Raleway', system-ui, sans-serif;
+
+    /* Obsidian-dark palette */
+    --ob-bg: #0b0b0d;
+    --ob-panel: #131316;
+    --ob-panel-alt: #17171b;
+    --ob-border: #26262b;
+    --ob-text: #dcdce0;
+    --ob-text-dim: #86868f;
+    --ob-text-faint: #58585f;
+
+    --node-doc: #c7cad1;
+    --node-doc-dim: #8b8e96;
+    --node-sec: #6e727c;
+    --node-sec-dim: #4a4d54;
+    --edge: #35353c;
+    --edge-bright: #55555f;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: var(--ob-bg);
+    color: var(--ob-text);
+    font-family: var(--font-brand);
+    overflow: hidden;
+  }
+
+  #app {
+    display: grid;
+    grid-template-columns: 250px 1fr 360px;
+    grid-template-rows: 52px 1fr 220px;
+    grid-template-areas:
+      "header header header"
+      "sidebar graph  reading"
+      "sidebar chat   chat";
+    height: 100vh;
+    width: 100vw;
+  }
+
+  /* ---------------- Header ---------------- */
+  header {
+    grid-area: header;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 18px;
+    background: var(--ob-panel);
+    border-bottom: 1px solid var(--ob-border);
+  }
+
+  .brand {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+
+  .brand .mark {
+    color: var(--brand-gold);
+    font-weight: 800;
+    font-size: 15px;
+    letter-spacing: 0.06em;
+  }
+
+  .brand .name {
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--ob-text);
+    letter-spacing: 0.01em;
+  }
+
+  .brand .sub {
+    font-size: 11px;
+    color: var(--ob-text-faint);
+  }
+
+  .status-pill {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 11.5px;
+    color: var(--ob-text-dim);
+    padding: 5px 10px;
+    border: 1px solid var(--ob-border);
+    border-radius: 20px;
+    background: var(--ob-panel-alt);
+  }
+
+  .status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--ob-text-faint);
+    transition: background 0.3s;
+  }
+  .status-dot.ok { background: #4caf6b; box-shadow: 0 0 6px rgba(76,175,107,0.6); }
+  .status-dot.bad { background: #d15353; box-shadow: 0 0 6px rgba(209,83,83,0.6); }
+  .status-dot.pending { background: #b98d1f; }
+
+  /* ---------------- Sidebar (file explorer) ---------------- */
+  #sidebar {
+    grid-area: sidebar;
+    background: var(--ob-panel);
+    border-right: 1px solid var(--ob-border);
+    overflow-y: auto;
+    padding: 10px 0 10px 0;
+  }
+
+  .sidebar-title {
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    color: var(--ob-text-faint);
+    padding: 4px 16px 10px;
+  }
+
+  .doc-item { user-select: none; }
+
+  .doc-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--ob-text);
+    border-radius: 4px;
+    margin: 0 6px;
+  }
+  .doc-row:hover { background: var(--ob-panel-alt); }
+  .doc-row .caret {
+    width: 10px;
+    color: var(--ob-text-faint);
+    font-size: 10px;
+    transition: transform 0.15s;
+  }
+  .doc-row .caret.open { transform: rotate(90deg); }
+  .doc-row .icon { color: var(--brand-gold); font-size: 12px; }
+
+  .sec-list { display: none; flex-direction: column; }
+  .sec-list.open { display: flex; }
+
+  .sec-row {
+    padding: 5px 14px 5px 38px;
+    font-size: 12.3px;
+    color: var(--ob-text-dim);
+    cursor: pointer;
+    border-radius: 4px;
+    margin: 0 6px;
+    line-height: 1.35;
+  }
+  .sec-row:hover { color: var(--ob-text); background: var(--ob-panel-alt); }
+  .sec-row.active {
+    color: var(--brand-gold);
+    background: rgba(218,169,0,0.08);
+  }
+  .sec-row.cited {
+    color: var(--brand-gold);
+  }
+  .sec-row.cited::before {
+    content: "● ";
+    font-size: 9px;
+  }
+
+  /* ---------------- Graph ---------------- */
+  #graph-wrap {
+    grid-area: graph;
+    position: relative;
+    background:
+      radial-gradient(circle at 50% 40%, #101013 0%, #0b0b0d 70%);
+    overflow: hidden;
+    border-right: 1px solid var(--ob-border);
+  }
+
+  #graph-svg { width: 100%; height: 100%; cursor: grab; }
+  #graph-svg:active { cursor: grabbing; }
+
+  .graph-hint {
+    position: absolute;
+    bottom: 10px;
+    left: 12px;
+    font-size: 10.5px;
+    color: var(--ob-text-faint);
+    letter-spacing: 0.02em;
+  }
+
+  .graph-banner {
+    position: absolute;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 10px;
+    text-align: center;
+    padding: 20px;
+    background: rgba(11,11,13,0.9);
+    z-index: 5;
+  }
+  .graph-banner.show { display: flex; }
+  .graph-banner .big { font-size: 14px; color: var(--ob-text); }
+  .graph-banner .small { font-size: 12px; color: var(--ob-text-dim); max-width: 320px; }
+  .graph-banner code {
+    background: var(--ob-panel-alt);
+    border: 1px solid var(--ob-border);
+    padding: 1px 6px;
+    border-radius: 4px;
+    color: var(--brand-gold);
+  }
+
+  /* node/edge styling driven mostly inline via JS attrs, but transitions here */
+  .edge-line { stroke: var(--edge); stroke-width: 1; transition: stroke 0.2s, stroke-width 0.2s, opacity 0.2s; }
+  .edge-line.dim { opacity: 0.15; }
+  .edge-line.bright { stroke: var(--edge-bright); stroke-width: 1.4; opacity: 1; }
+
+  .node-circle { transition: fill 0.2s, r 0.2s, filter 0.2s, opacity 0.2s; cursor: pointer; }
+  .node-circle.dim { opacity: 0.25; }
+  .node-label {
+    font-family: var(--font-brand);
+    fill: var(--ob-text-dim);
+    font-size: 9.5px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .node-label.show { opacity: 1; }
+  .node-label.doc-label { fill: var(--ob-text); font-size: 10.5px; font-weight: 600; }
+
+  @keyframes pulseglow {
+    0%   { filter: drop-shadow(0 0 2px var(--brand-gold)) drop-shadow(0 0 0px var(--brand-gold)); }
+    50%  { filter: drop-shadow(0 0 10px var(--brand-gold)) drop-shadow(0 0 18px var(--brand-gold-soft)); }
+    100% { filter: drop-shadow(0 0 2px var(--brand-gold)) drop-shadow(0 0 0px var(--brand-gold)); }
+  }
+  .node-circle.cited {
+    fill: var(--brand-gold) !important;
+    animation: pulseglow 1.6s ease-in-out infinite;
+  }
+  .node-circle.selected {
+    stroke: var(--brand-gold);
+    stroke-width: 2px;
+  }
+
+  /* ---------------- Reading pane ---------------- */
+  #reading {
+    grid-area: reading;
+    background: var(--ob-panel);
+    border-left: 1px solid var(--ob-border);
+    overflow-y: auto;
+    padding: 18px 20px 30px;
+  }
+  #reading .empty {
+    color: var(--ob-text-faint);
+    font-size: 12.5px;
+    margin-top: 30px;
+    text-align: center;
+    line-height: 1.6;
+  }
+  #reading .crumb {
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--brand-gold);
+    margin-bottom: 6px;
+  }
+  #reading h1 {
+    font-size: 17px;
+    margin: 6px 0 14px;
+    color: var(--ob-text);
+    border-bottom: 1px solid var(--ob-border);
+    padding-bottom: 10px;
+  }
+  #reading h2 {
+    font-size: 14px;
+    margin: 18px 0 8px;
+    color: var(--ob-text);
+  }
+  #reading p { font-size: 13px; line-height: 1.65; color: #c6c6cc; margin: 8px 0; }
+  #reading ul { padding-left: 18px; margin: 8px 0; }
+  #reading li { font-size: 13px; line-height: 1.6; color: #c6c6cc; margin: 4px 0; }
+  #reading b, #reading strong { color: var(--ob-text); font-weight: 700; }
+
+  /* ---------------- Chat dock ---------------- */
+  #chat {
+    grid-area: chat;
+    background: var(--ob-panel-alt);
+    border-top: 1px solid var(--ob-border);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  #chat-log {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .msg { max-width: 72%; font-size: 12.8px; line-height: 1.55; padding: 8px 12px; border-radius: 8px; }
+  .msg.user {
+    align-self: flex-end;
+    background: rgba(218,169,0,0.14);
+    color: var(--ob-text);
+    border: 1px solid rgba(218,169,0,0.25);
+  }
+  .msg.assistant {
+    align-self: flex-start;
+    background: var(--ob-panel);
+    border: 1px solid var(--ob-border);
+    color: #cfcfd4;
+  }
+  .msg.loading { color: var(--ob-text-dim); font-style: italic; }
+  .msg .cite-line {
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--brand-gold);
+    cursor: pointer;
+  }
+  .msg .cite-line:hover { text-decoration: underline; }
+  .msg.error { border-color: #7a3a3a; color: #e2a3a3; background: rgba(200,80,80,0.08); }
+
+  #chat-form {
+    display: flex;
+    gap: 8px;
+    padding: 10px 14px;
+    border-top: 1px solid var(--ob-border);
+  }
+  #chat-input {
+    flex: 1;
+    background: var(--ob-panel);
+    border: 1px solid var(--ob-border);
+    border-radius: 6px;
+    color: var(--ob-text);
+    font-family: var(--font-brand);
+    font-size: 13px;
+    padding: 9px 12px;
+    outline: none;
+  }
+  #chat-input:focus { border-color: var(--brand-gold); }
+  #chat-input:disabled { opacity: 0.5; }
+  #chat-send {
+    background: var(--brand-gold);
+    border: none;
+    color: #1a1400;
+    font-family: var(--font-brand);
+    font-weight: 700;
+    font-size: 12.5px;
+    padding: 0 18px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  #chat-send:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #2a2a30; border-radius: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+</style>
+
+<div id="app">
+  <header>
+    <div class="brand">
+      <span class="mark">LANDMARK</span>
+      <span class="name">Policy &amp; Support RAG Assistant</span>
+      <span class="sub">graph-view demo</span>
+    </div>
+    <div class="status-pill">
+      <span class="status-dot pending" id="status-dot"></span>
+      <span id="status-text">Checking backend…</span>
+    </div>
+  </header>
+
+  <nav id="sidebar">
+    <div class="sidebar-title">Policy Documents</div>
+    <div id="doc-tree"></div>
+  </nav>
+
+  <div id="graph-wrap">
+    <svg id="graph-svg" viewBox="0 0 1000 700" preserveAspectRatio="xMidYMid meet"></svg>
+    <div class="graph-hint">hover a node to trace its links · click to open in reading pane</div>
+    <div class="graph-banner" id="graph-banner">
+      <div class="big">Backend not reachable</div>
+      <div class="small">
+        The FastAPI backend isn't responding on <code>localhost:8010</code>.
+        Start it — see <code>README.md</code> — then reload this page.
+      </div>
+    </div>
+  </div>
+
+  <div id="reading">
+    <div class="empty">Select a section from the sidebar or graph<br/>to read it here.</div>
+  </div>
+
+  <div id="chat">
+    <div id="chat-log"></div>
+    <form id="chat-form">
+      <input id="chat-input" type="text" placeholder="Ask about returns, warranty, loyalty points, shipping…" autocomplete="off" disabled />
+      <button id="chat-send" type="submit" disabled>Ask</button>
+    </form>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var API_BASE = "http://localhost:8010";
+
+  // ---------------------------------------------------------------------
+  // State
+  // ---------------------------------------------------------------------
+  var documents = [];        // raw /documents response
+  var nodes = {};            // id -> node record {id, kind, x, y, r, filename, sectionTitle, label}
+  var edges = [];            // {a, b}
+  var backendUp = false;
+  var selectedNodeId = null;
+  var chatHistory = [];      // [{role, content}]
+
+  // ---------------------------------------------------------------------
+  // Tiny deterministic PRNG (seeded by string) so layout is stable across
+  // reloads without needing a real physics simulation.
+  // ---------------------------------------------------------------------
+  function hashSeed(str) {
+    var h = 2166136261;
+    for (var i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i);
+      h = (h * 16777619) >>> 0;
+    }
+    return h >>> 0;
+  }
+  function mulberry32(seed) {
+    return function () {
+      seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+      var t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  // ---------------------------------------------------------------------
+  // Minimal markdown -> HTML renderer (headers, bold, lists, paragraphs)
+  // ---------------------------------------------------------------------
+  function escapeHtml(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  function inlineMd(s) {
+    s = escapeHtml(s);
+    s = s.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
+    return s;
+  }
+  function renderMarkdown(md) {
+    var lines = md.split("\n");
+    var html = [];
+    var listBuffer = [];
+    var listType = null; // 'ul' | 'ol'
+
+    function flushList() {
+      if (listBuffer.length) {
+        html.push("<" + listType + ">" + listBuffer.join("") + "</" + listType + ">");
+        listBuffer = [];
+        listType = null;
+      }
+    }
+
+    lines.forEach(function (line) {
+      var trimmed = line.trim();
+      if (!trimmed) { flushList(); return; }
+
+      var h2 = trimmed.match(/^##\s+(.*)$/);
+      var h1 = trimmed.match(/^#\s+(.*)$/);
+      var ul = trimmed.match(/^[-*]\s+(.*)$/);
+      var ol = trimmed.match(/^\d+\.\s+(.*)$/);
+
+      if (h1 && !h2) {
+        flushList();
+        html.push("<h1>" + inlineMd(h1[1]) + "</h1>");
+      } else if (h2) {
+        flushList();
+        html.push("<h2>" + inlineMd(h2[1]) + "</h2>");
+      } else if (ul) {
+        if (listType && listType !== "ul") flushList();
+        listType = "ul";
+        listBuffer.push("<li>" + inlineMd(ul[1]) + "</li>");
+      } else if (ol) {
+        if (listType && listType !== "ol") flushList();
+        listType = "ol";
+        listBuffer.push("<li>" + inlineMd(ol[1]) + "</li>");
+      } else {
+        flushList();
+        html.push("<p>" + inlineMd(trimmed) + "</p>");
+      }
+    });
+    flushList();
+    return html.join("\n");
+  }
+
+  // ---------------------------------------------------------------------
+  // Graph layout: each document is a hub arranged loosely around the
+  // canvas center; its sections orbit the hub. No real physics — just a
+  // seeded pseudo-random scatter so it reads as an organic graph rather
+  // than a rigid grid, matching Obsidian's graph-view feel.
+  // ---------------------------------------------------------------------
+  function buildGraph(docs) {
+    nodes = {};
+    edges = [];
+
+    var W = 1000, H = 700;
+    var cx = W / 2, cy = H / 2;
+    var docCount = docs.length;
+    var docRadius = Math.min(W, H) * 0.32;
+
+    docs.forEach(function (doc, i) {
+      var rnd = mulberry32(hashSeed(doc.filename));
+      var baseAngle = (i / docCount) * Math.PI * 2;
+      var jitterAngle = (rnd() - 0.5) * 0.5;
+      var angle = baseAngle + jitterAngle;
+      var radiusJitter = docRadius * (0.8 + rnd() * 0.4);
+
+      var dx = cx + Math.cos(angle) * radiusJitter;
+      var dy = cy + Math.sin(angle) * radiusJitter * 0.72; // flatten slightly for the wide canvas
+
+      var docId = "doc:" + doc.filename;
+      nodes[docId] = {
+        id: docId,
+        kind: "doc",
+        x: dx,
+        y: dy,
+        r: 11,
+        filename: doc.filename,
+        sectionTitle: null,
+        label: doc.title,
+        doc: doc
+      };
+
+      var secCount = doc.sections.length;
+      var secOrbit = 60 + secCount * 6;
+      doc.sections.forEach(function (sec, j) {
+        var srnd = mulberry32(hashSeed(doc.filename + "::" + sec.title));
+        var secAngle = (j / Math.max(secCount, 1)) * Math.PI * 2 + srnd() * 0.6;
+        var secR = secOrbit * (0.75 + srnd() * 0.5);
+        var sx = dx + Math.cos(secAngle) * secR;
+        var sy = dy + Math.sin(secAngle) * secR;
+
+        var secId = "sec:" + doc.filename + "::" + sec.title;
+        nodes[secId] = {
+          id: secId,
+          kind: "sec",
+          x: sx,
+          y: sy,
+          r: 5,
+          filename: doc.filename,
+          sectionTitle: sec.title,
+          label: sec.title,
+          content: sec.content,
+          docTitle: doc.title
+        };
+        edges.push({ a: docId, b: secId });
+      });
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // SVG rendering
+  // ---------------------------------------------------------------------
+  var svgNS = "http://www.w3.org/2000/svg";
+  var svg = document.getElementById("graph-svg");
+  var gEdges, gNodes;
+
+  function svgEl(tag, attrs) {
+    var el = document.createElementNS(svgNS, tag);
+    for (var k in attrs) el.setAttribute(k, attrs[k]);
+    return el;
+  }
+
+  function renderGraph() {
+    svg.innerHTML = "";
+    gEdges = svgEl("g", { id: "edges" });
+    gNodes = svgEl("g", { id: "nodes" });
+    svg.appendChild(gEdges);
+    svg.appendChild(gNodes);
+
+    edges.forEach(function (e) {
+      var a = nodes[e.a], b = nodes[e.b];
+      if (!a || !b) return;
+      var line = svgEl("line", {
+        x1: a.x, y1: a.y, x2: b.x, y2: b.y,
+        class: "edge-line",
+        "data-a": e.a, "data-b": e.b
+      });
+      gEdges.appendChild(line);
+    });
+
+    Object.keys(nodes).forEach(function (id) {
+      var n = nodes[id];
+      var circle = svgEl("circle", {
+        cx: n.x, cy: n.y, r: n.r,
+        class: "node-circle",
+        fill: n.kind === "doc" ? "var(--node-doc)" : "var(--node-sec)",
+        "data-id": id
+      });
+      circle.addEventListener("mouseenter", function () { hoverNode(id); });
+      circle.addEventListener("mouseleave", function () { hoverNode(null); });
+      circle.addEventListener("click", function () { selectNode(id, true); });
+      gNodes.appendChild(circle);
+
+      var label = svgEl("text", {
+        x: n.x + n.r + 5, y: n.y + 3,
+        class: "node-label" + (n.kind === "doc" ? " doc-label show" : ""),
+        "data-id": id
+      });
+      label.textContent = n.label;
+      gNodes.appendChild(label);
+    });
+  }
+
+  function neighborsOf(id) {
+    var out = [];
+    edges.forEach(function (e) {
+      if (e.a === id) out.push(e.b);
+      if (e.b === id) out.push(e.a);
+    });
+    return out;
+  }
+
+  function hoverNode(id) {
+    var circles = gNodes.querySelectorAll(".node-circle");
+    var labels = gNodes.querySelectorAll(".node-label");
+    var lines = gEdges.querySelectorAll(".edge-line");
+
+    if (!id) {
+      circles.forEach(function (c) { c.classList.remove("dim"); });
+      labels.forEach(function (l) {
+        if (!l.classList.contains("doc-label")) l.classList.remove("show");
+      });
+      lines.forEach(function (l) { l.classList.remove("dim", "bright"); });
+      return;
+    }
+
+    var active = {};
+    active[id] = true;
+    neighborsOf(id).forEach(function (nid) { active[nid] = true; });
+
+    circles.forEach(function (c) {
+      var cid = c.getAttribute("data-id");
+      c.classList.toggle("dim", !active[cid]);
+    });
+    labels.forEach(function (l) {
+      var lid = l.getAttribute("data-id");
+      if (!l.classList.contains("doc-label")) {
+        l.classList.toggle("show", !!active[lid]);
+      }
+    });
+    lines.forEach(function (l) {
+      var a = l.getAttribute("data-a"), b = l.getAttribute("data-b");
+      var touches = a === id || b === id;
+      l.classList.toggle("bright", touches);
+      l.classList.toggle("dim", !touches && !(active[a] && active[b]));
+    });
+  }
+
+  function panToNode(id) {
+    var n = nodes[id];
+    if (!n) return;
+    var W = 1000, H = 700;
+    var scale = 1.6;
+    var vx = Math.max(0, Math.min(W - W / scale, n.x - (W / scale) / 2));
+    var vy = Math.max(0, Math.min(H - H / scale, n.y - (H / scale) / 2));
+    svg.setAttribute("viewBox", vx + " " + vy + " " + (W / scale) + " " + (H / scale));
+    setTimeout(function () {
+      svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+    }, 1600);
+  }
+
+  function markSelected(id) {
+    gNodes.querySelectorAll(".node-circle").forEach(function (c) {
+      c.classList.toggle("selected", c.getAttribute("data-id") === id);
+    });
+  }
+
+  function clearCited() {
+    gNodes.querySelectorAll(".node-circle.cited").forEach(function (c) {
+      c.classList.remove("cited");
+    });
+    document.querySelectorAll(".sec-row.cited").forEach(function (el) {
+      el.classList.remove("cited");
+    });
+  }
+
+  function markCited(id) {
+    var c = gNodes.querySelector('.node-circle[data-id="' + cssEscape(id) + '"]');
+    if (c) c.classList.add("cited");
+    var row = document.querySelector('.sec-row[data-id="' + cssEscape(id) + '"]');
+    if (row) row.classList.add("cited");
+  }
+
+  function cssEscape(s) {
+    return s.replace(/[:"\\]/g, "\\$&");
+  }
+
+  // ---------------------------------------------------------------------
+  // Sidebar (file explorer)
+  // ---------------------------------------------------------------------
+  function renderSidebar(docs) {
+    var tree = document.getElementById("doc-tree");
+    tree.innerHTML = "";
+
+    docs.forEach(function (doc) {
+      var item = document.createElement("div");
+      item.className = "doc-item";
+
+      var row = document.createElement("div");
+      row.className = "doc-row";
+      row.innerHTML =
+        '<span class="caret">▶</span><span class="icon">▤</span><span>' +
+        escapeHtml(doc.title) + "</span>";
+
+      var secList = document.createElement("div");
+      secList.className = "sec-list";
+
+      doc.sections.forEach(function (sec) {
+        var secId = "sec:" + doc.filename + "::" + sec.title;
+        var secRow = document.createElement("div");
+        secRow.className = "sec-row";
+        secRow.textContent = sec.title;
+        secRow.setAttribute("data-id", secId);
+        secRow.addEventListener("click", function (ev) {
+          ev.stopPropagation();
+          selectNode(secId, true);
+        });
+        secList.appendChild(secRow);
+      });
+
+      row.addEventListener("click", function () {
+        var isOpen = secList.classList.toggle("open");
+        row.querySelector(".caret").classList.toggle("open", isOpen);
+      });
+
+      item.appendChild(row);
+      item.appendChild(secList);
+      tree.appendChild(item);
+
+      // auto-expand by default so the sidebar reads as a real explorer
+      secList.classList.add("open");
+      row.querySelector(".caret").classList.add("open");
+    });
+  }
+
+  function highlightSidebarActive(id) {
+    document.querySelectorAll(".sec-row").forEach(function (el) {
+      el.classList.toggle("active", el.getAttribute("data-id") === id);
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // Reading pane
+  // ---------------------------------------------------------------------
+  function openInReadingPane(id) {
+    var n = nodes[id];
+    var pane = document.getElementById("reading");
+    if (!n) {
+      pane.innerHTML = '<div class="empty">Nothing to show.</div>';
+      return;
+    }
+    if (n.kind === "doc") {
+      var secsHtml = n.doc.sections.map(function (s) {
+        return renderMarkdown(s.content);
+      }).join("\n");
+      pane.innerHTML =
+        '<div class="crumb">' + escapeHtml(n.filename) + "</div>" +
+        "<h1>" + escapeHtml(n.label) + "</h1>" + secsHtml;
+    } else {
+      pane.innerHTML =
+        '<div class="crumb">' + escapeHtml(n.docTitle) + " &rarr; " + escapeHtml(n.sectionTitle) + "</div>" +
+        renderMarkdown(n.content);
+    }
+  }
+
+  function selectNode(id, doPan) {
+    selectedNodeId = id;
+    markSelected(id);
+    highlightSidebarActive(id);
+    openInReadingPane(id);
+    if (doPan) panToNode(id);
+  }
+
+  // ---------------------------------------------------------------------
+  // Citation matching: map a /ask citation {source, section} onto the
+  // exact node id produced by buildGraph(), so the graph highlight uses
+  // the SAME nodes rendered from /documents (per the demo's core claim
+  // that the visual and the retrieval are backed by the same data).
+  // ---------------------------------------------------------------------
+  function norm(s) { return (s || "").trim().toLowerCase(); }
+
+  function matchCitationNode(citation) {
+    var wantFile = norm(citation.source);
+    var wantSection = norm(citation.section);
+
+    // exact filename + section match
+    var best = null;
+    Object.keys(nodes).forEach(function (id) {
+      var n = nodes[id];
+      if (n.kind !== "sec") return;
+      if (norm(n.filename) === wantFile && norm(n.sectionTitle) === wantSection) {
+        best = id;
+      }
+    });
+    if (best) return best;
+
+    // fallback: same file, section title contains/contained-by citation section
+    Object.keys(nodes).forEach(function (id) {
+      if (best) return;
+      var n = nodes[id];
+      if (n.kind !== "sec") return;
+      if (norm(n.filename) !== wantFile) return;
+      var a = norm(n.sectionTitle);
+      if (a.indexOf(wantSection) !== -1 || wantSection.indexOf(a) !== -1) {
+        best = id;
+      }
+    });
+    if (best) return best;
+
+    // last resort: highlight the document hub itself
+    var docId = "doc:" + citation.source;
+    if (nodes[docId]) return docId;
+    return null;
+  }
+
+  // ---------------------------------------------------------------------
+  // Backend health + documents
+  // ---------------------------------------------------------------------
+  function setStatus(state, text) {
+    var dot = document.getElementById("status-dot");
+    var label = document.getElementById("status-text");
+    dot.className = "status-dot " + state;
+    label.textContent = text;
+  }
+
+  function showBackendDown() {
+    backendUp = false;
+    document.getElementById("graph-banner").classList.add("show");
+    document.getElementById("chat-input").disabled = true;
+    document.getElementById("chat-send").disabled = true;
+    setStatus("bad", "Backend unreachable");
+  }
+
+  function showBackendUp(indexReady) {
+    backendUp = true;
+    document.getElementById("graph-banner").classList.remove("show");
+    document.getElementById("chat-input").disabled = false;
+    document.getElementById("chat-send").disabled = false;
+    setStatus("ok", indexReady ? "Backend connected" : "Backend connected (index building…)");
+  }
+
+  function loadAll() {
+    fetch(API_BASE + "/health")
+      .then(function (r) { if (!r.ok) throw new Error("health " + r.status); return r.json(); })
+      .then(function (health) {
+        return fetch(API_BASE + "/documents")
+          .then(function (r) { if (!r.ok) throw new Error("documents " + r.status); return r.json(); })
+          .then(function (docs) {
+            documents = docs;
+            buildGraph(docs);
+            renderGraph();
+            renderSidebar(docs);
+            showBackendUp(health.index_ready);
+          });
+      })
+      .catch(function (err) {
+        console.error("Backend not reachable:", err);
+        showBackendDown();
+      });
+  }
+
+  // ---------------------------------------------------------------------
+  // Chat / RAG
+  // ---------------------------------------------------------------------
+  function appendMsg(role, html) {
+    var log = document.getElementById("chat-log");
+    var div = document.createElement("div");
+    div.className = "msg " + role;
+    div.innerHTML = html;
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+    return div;
+  }
+
+  function askQuestion(question) {
+    appendMsg("user", escapeHtml(question));
+    var loadingEl = appendMsg("assistant loading", "Retrieving relevant policy sections and generating a grounded answer…");
+
+    fetch(API_BASE + "/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question: question, history: chatHistory })
+    })
+      .then(function (r) {
+        return r.json().then(function (body) { return { ok: r.ok, body: body }; });
+      })
+      .then(function (result) {
+        loadingEl.remove();
+        if (!result.ok || result.body.error) {
+          appendMsg("assistant error", escapeHtml(result.body.error || "Request failed."));
+          return;
+        }
+        var data = result.body;
+        chatHistory.push({ role: "user", content: question });
+        chatHistory.push({ role: "assistant", content: data.answer });
+
+        clearCited();
+
+        var citeHtml = "";
+        (data.citations || []).forEach(function (c) {
+          var nid = matchCitationNode(c);
+          if (nid) markCited(nid);
+          citeHtml +=
+            '<div class="cite-line" data-node="' + (nid || "") + '">Source: ' +
+            escapeHtml(c.source) + " &rarr; " + escapeHtml(c.section) + "</div>";
+        });
+
+        var msgEl = appendMsg("assistant", escapeHtml(data.answer) + citeHtml);
+        msgEl.querySelectorAll(".cite-line").forEach(function (el) {
+          el.addEventListener("click", function () {
+            var nid = el.getAttribute("data-node");
+            if (nid && nodes[nid]) selectNode(nid, true);
+          });
+        });
+
+        // Auto-open the top citation in the reading pane + pan graph to it.
+        var top = (data.citations || [])[0];
+        if (top) {
+          var topId = matchCitationNode(top);
+          if (topId) selectNode(topId, true);
+        }
+      })
+      .catch(function (err) {
+        loadingEl.remove();
+        appendMsg("assistant error", "Could not reach the backend: " + escapeHtml(String(err)));
+        showBackendDown();
+      });
+  }
+
+  document.getElementById("chat-form").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var input = document.getElementById("chat-input");
+    var q = input.value.trim();
+    if (!q || !backendUp) return;
+    input.value = "";
+    askQuestion(q);
+  });
+
+  // ---------------------------------------------------------------------
+  // Boot
+  // ---------------------------------------------------------------------
+  loadAll();
+})();
+</script>
