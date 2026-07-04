@@ -6,5 +6,4 @@ dist/
 *.log
 __pycache__/
 *.pyc
-backend/index.json
 venv/
