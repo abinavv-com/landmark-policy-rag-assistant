@@ -225,8 +225,9 @@
     position: absolute;
     bottom: 10px;
     left: 12px;
-    font-size: 10.5px;
-    color: var(--ob-text-faint);
+    font-size: 12.5px;
+    color: var(--ob-text-dim);
+    font-weight: 600;
     letter-spacing: 0.02em;
   }
 
@@ -947,9 +948,9 @@
   }
   function baseOpacityFor(n) {
     if (n.kind === "doc") return 0.55;
-    if (n.kind === "chunk") return 0.32;
-    if (n.kind === "candidate") return 0.16;
-    if (n.kind === "finalist") return 0.16;
+    if (n.kind === "chunk") return 0.5;
+    if (n.kind === "candidate") return 0.3;
+    if (n.kind === "finalist") return 0.3;
     return null; // query/answer opacity comes from CSS classes
   }
 
@@ -1575,6 +1576,16 @@
             renderGraph();
             renderSidebar(documents);
             showBackendUp(health.index_ready);
+
+            // Auto-fire one example question on idle load so the graph
+            // is never fully empty before a user asks anything.
+            if (chatHistory.length === 0 && backendUp) {
+              setTimeout(function () {
+                if (chatHistory.length === 0 && backendUp && !document.getElementById("graph-banner").classList.contains("show")) {
+                  askQuestion("What is the return policy?");
+                }
+              }, 900);
+            }
           });
       })
       .catch(function (err) {
